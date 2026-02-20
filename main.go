@@ -25,9 +25,10 @@ import (
 // ============================================================================
 
 var (
-	jwtSecret  = []byte(getEnv("JWT_SECRET", "clipboard-sync-secret-key-change-me"))
-	listenAddr = getEnv("LISTEN_ADDR", ":8080")
-	dbPath     = getEnv("DB_PATH", "./data/clip.db")
+	jwtSecret         = []byte(getEnv("JWT_SECRET", "clipboard-sync-secret-key-change-me"))
+	listenAddr        = getEnv("LISTEN_ADDR", ":8080")
+	dbPath            = getEnv("DB_PATH", "./data/clip.db")
+	allowRegistration = true // Memory cache for global setting
 )
 
 func getEnv(key, fallback string) string {
@@ -56,6 +57,11 @@ type ClipEntry struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+type SystemSetting struct {
+	Key   string `gorm:"primaryKey;size:64" json:"key"`
+	Value string `gorm:"type:text" json:"value"`
+}
+
 // ============================================================================
 // Auth DTOs
 // ============================================================================
@@ -73,6 +79,19 @@ type LoginRequest struct {
 type ClipRequest struct {
 	Content    string `json:"content" binding:"required"`
 	DeviceName string `json:"device_name"`
+}
+
+type ChangePasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6,max=128"`
+}
+
+type AdminPasswordReset struct {
+	NewPassword string `json:"new_password" binding:"required,min=6,max=128"`
+}
+
+type AdminConfigUpdate struct {
+	AllowRegistration bool `json:"allow_registration"`
 }
 
 // ============================================================================
@@ -287,7 +306,27 @@ func initDB() {
 	sqlDB.Exec("PRAGMA synchronous=NORMAL")
 
 	// Auto migrate
-	db.AutoMigrate(&User{}, &ClipEntry{})
+	db.AutoMigrate(&User{}, &ClipEntry{}, &SystemSetting{})
+
+	// Initialize SystemSetting
+	var regSetting SystemSetting
+	if err := db.Where("key = ?", "AllowRegistration").First(&regSetting).Error; err != nil {
+		regSetting = SystemSetting{Key: "AllowRegistration", Value: "true"}
+		db.Create(&regSetting)
+	}
+	allowRegistration = (regSetting.Value == "true")
+
+	// Initialize Admin
+	var adminUser User
+	if err := db.Where("username = ?", "admin").First(&adminUser).Error; err != nil {
+		hash, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+		adminUser = User{
+			Username:     "admin",
+			PasswordHash: string(hash),
+		}
+		db.Create(&adminUser)
+		log.Println("[init] Default admin account created: admin / admin123")
+	}
 }
 
 // ============================================================================
@@ -316,6 +355,11 @@ func enforceHistoryLimit(userID uint) {
 // ============================================================================
 
 func handleRegister(c *gin.Context) {
+	if !allowRegistration {
+		c.JSON(http.StatusForbidden, gin.H{"error": "registration is currently disabled"})
+		return
+	}
+
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -933,6 +977,20 @@ const indexHTML = `<!DOCTYPE html>
   @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   .hidden { display: none !important; }
 
+  /* Modals */
+  .modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5); z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(2px);
+  }
+  .modal-card {
+    background: var(--surface); padding: 24px; border-radius: var(--radius);
+    width: 100%; max-width: 400px; box-shadow: var(--shadow-hover);
+  }
+  .modal-card h3 { margin-bottom: 16px; font-size: 1.25em; }
+  .modal-actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px; }
+
   /* Icons SVG */
   .icon { width: 1.2em; height: 1.2em; fill: currentColor; }
 
@@ -1002,13 +1060,24 @@ const indexHTML = `<!DOCTYPE html>
       </div>
       
       <div class="sidebar-nav">
-        <div class="nav-item active" id="nav-clipboard" onclick="switchView('clipboard')">
+        <!-- User items -->
+        <div class="nav-item active user-nav" id="nav-clipboard" onclick="switchView('clipboard')">
           <svg class="icon" viewBox="0 0 24 24"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
           剪贴板
         </div>
-        <div class="nav-item" id="nav-devices" onclick="switchView('devices')">
+        <div class="nav-item user-nav" id="nav-devices" onclick="switchView('devices')">
           <svg class="icon" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
           在线设备 <span id="device-count-badge" style="margin-left:auto; background:var(--accent); color:#fff; border-radius:99px; padding:1px 8px; font-size:0.75em; font-weight:700;">0</span>
+        </div>
+
+        <!-- Admin items -->
+        <div class="nav-item admin-nav hidden" id="nav-users" onclick="switchView('users')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+          用户管理
+        </div>
+        <div class="nav-item admin-nav hidden" id="nav-settings" onclick="switchView('settings')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.44-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+          系统设置
         </div>
       </div>
 
@@ -1017,9 +1086,14 @@ const indexHTML = `<!DOCTYPE html>
           <div class="user-avatar" id="avatar-letter">U</div>
           <div class="user-name" id="display-user"></div>
         </div>
-        <button class="btn-icon danger" onclick="logout()" title="退出登录">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
-        </button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-icon" onclick="openPwdModal()" title="修改密码">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M12.65 10A5.99 5.99 0 0 0 7 6c-3.31 0-6 2.69-6 6s2.69 6 6 6a5.99 5.99 0 0 0 5.65-4h2.35v4h4v-4h2v-4h-8.35zM7 14c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2z"/></svg>
+          </button>
+          <button class="btn-icon danger" onclick="logout()" title="退出登录">
+            <svg class="icon" viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+          </button>
+        </div>
       </div>
     </aside>
 
@@ -1027,9 +1101,14 @@ const indexHTML = `<!DOCTYPE html>
     <main class="main-content">
       <div class="content-wrapper">
         <!-- Clipboard View -->
-        <div id="view-clipboard">
+        <div id="view-clipboard" class="view-panel">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h2 style="font-size: 1.5em; font-weight: 700;">我的剪贴板</h2>
+            <div style="display:flex; align-items:center; gap:16px;">
+              <h2 style="font-size: 1.5em; font-weight: 700;">我的剪贴板</h2>
+              <button class="btn-icon danger" style="padding:4px;" title="清空所有记录" onclick="clearAllHistory()">
+                <svg class="icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+              </button>
+            </div>
             <div class="status-badge" id="ws-badge">
               <div class="status-dot" id="ws-dot"></div>
               <span id="ws-status">未连接</span>
@@ -1053,7 +1132,7 @@ const indexHTML = `<!DOCTYPE html>
         </div>
 
         <!-- Devices View -->
-        <div id="view-devices" class="hidden">
+        <div id="view-devices" class="view-panel hidden">
           <div style="display: flex; justify-content: space-between; align-items: center;">
             <h2 style="font-size: 1.5em; font-weight: 700;">在线设备</h2>
             <div class="status-badge online">
@@ -1067,8 +1146,48 @@ const indexHTML = `<!DOCTYPE html>
             </div>
           </div>
         </div>
+        
+        <!-- Admin Users View -->
+        <div id="view-users" class="view-panel hidden">
+          <h2 style="font-size: 1.5em; font-weight: 700;">用户管理</h2>
+          <div class="card" style="margin-top:24px;">
+            <div id="admin-user-list">
+              <!-- Admin users table injected here -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Admin Settings View -->
+        <div id="view-settings" class="view-panel hidden">
+          <h2 style="font-size: 1.5em; font-weight: 700;">系统设置</h2>
+          <div class="card" style="margin-top:24px;">
+            <div class="card-body" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3 style="font-size:1.1em; margin-bottom:4px;">开放注册</h3>
+                <p style="color:var(--text-dim); font-size:0.9em;">允许新用户从 Web 界面或客户端注册账号</p>
+              </div>
+              <div>
+                <button id="toggle-reg-btn" class="btn btn-outline" onclick="toggleRegistration()">加载中...</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
       </div>
     </main>
+  </div>
+
+  <!-- Password Modal -->
+  <div id="pwd-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <h3 id="pwd-modal-title">修改密码</h3>
+      <input type="password" id="pwd-old" placeholder="旧密码 (管理员重置他人密码时忽略)">
+      <input type="password" id="pwd-new" placeholder="新密码 (至少 6 位)">
+      <div class="modal-actions">
+        <button class="btn btn-outline btn-small" onclick="closePwdModal()">取消</button>
+        <button class="btn btn-primary btn-small" onclick="submitPwdModal()">确认修改</button>
+      </div>
+    </div>
   </div>
 
 <script>
@@ -1080,9 +1199,23 @@ let intentionalClose = false;
 let currentDevices = [];
 let currentDeviceID = null;
 let currentDeviceName = 'Web 浏览器';
+let pwdContext = { type: 'self', targetId: null };
 
 // Init
-if (token) showMain();
+initApp();
+
+async function initApp() {
+  try {
+    const res = await fetch(API + '/api/config');
+    const cfg = await res.json();
+    if (!cfg.allow_registration) {
+      document.getElementById('tab-register').classList.add('hidden');
+    }
+  } catch (e) {
+    console.error('Failed to load global config', e);
+  }
+  if (token) showMain();
+}
 
 function switchAuthTab(tab) {
   document.getElementById('tab-login').classList.remove('active');
@@ -1187,13 +1320,37 @@ function logout() {
   document.getElementById('main-section').classList.add('hidden');
 }
 
+function switchView(view) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.view-panel').forEach(el => el.classList.add('hidden'));
+
+  const nav = document.getElementById('nav-' + view);
+  const v = document.getElementById('view-' + view);
+  if (nav) nav.classList.add('active');
+  if (v) v.classList.remove('hidden');
+
+  if (view === 'devices') loadDevices();
+  if (view === 'users') loadUsers();
+  if (view === 'settings') loadSettings();
+}
+
 function showMain() {
   document.getElementById('auth-section').classList.add('hidden');
   document.getElementById('main-section').classList.remove('hidden');
   document.getElementById('display-user').textContent = username;
   document.getElementById('avatar-letter').textContent = username.charAt(0).toUpperCase();
-  loadHistory();
-  connectWS();
+
+  if (username === 'admin') {
+    document.querySelectorAll('.user-nav').forEach(el => el.classList.add('hidden'));
+    document.querySelectorAll('.admin-nav').forEach(el => el.classList.remove('hidden'));
+    switchView('users');
+  } else {
+    document.querySelectorAll('.user-nav').forEach(el => el.classList.remove('hidden'));
+    document.querySelectorAll('.admin-nav').forEach(el => el.classList.add('hidden'));
+    switchView('clipboard');
+    loadHistory();
+    connectWS();
+  }
 }
 
 function copyIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>'; }
@@ -1303,14 +1460,15 @@ async function deleteClip(id) {
   }
 }
 
-function switchView(view) {
-  document.getElementById('nav-clipboard').classList.remove('active');
-  document.getElementById('nav-devices').classList.remove('active');
-  document.getElementById('view-clipboard').classList.add('hidden');
-  document.getElementById('view-devices').classList.add('hidden');
-  document.getElementById('nav-' + view).classList.add('active');
-  document.getElementById('view-' + view).classList.remove('hidden');
-  if (view === 'devices') loadDevices();
+async function clearAllHistory() {
+  if (!confirm('确定要清空所有记录吗？此操作无法恢复。')) return;
+  try {
+    await apiFetch('/api/clipboard/all', { method: 'DELETE' });
+    showToast('记录已清空');
+    loadHistory();
+  } catch (e) {
+    showToast('清空失败: ' + e.message, 'error');
+  }
 }
 
 async function loadDevices() {
@@ -1448,9 +1606,277 @@ function connectWS() {
     } catch {}
   };
 }
+
+// ==========================================
+// Admin & Modals Logic
+// ==========================================
+
+function openPwdModal(targetId = null) {
+  pwdContext.targetId = targetId;
+  pwdContext.type = targetId ? 'admin_reset' : 'self';
+  document.getElementById('pwd-modal-title').textContent = targetId ? '重置该用户密码' : '修改我的密码';
+  document.getElementById('pwd-old').style.display = targetId ? 'none' : 'block';
+  document.getElementById('pwd-old').value = '';
+  document.getElementById('pwd-new').value = '';
+  document.getElementById('pwd-modal').classList.remove('hidden');
+}
+
+function closePwdModal() {
+  document.getElementById('pwd-modal').classList.add('hidden');
+}
+
+async function submitPwdModal() {
+  const oldPwd = document.getElementById('pwd-old').value;
+  const newPwd = document.getElementById('pwd-new').value;
+
+  if (!newPwd || newPwd.length < 6) return showToast('新密码至少6位', 'error');
+
+  try {
+    if (pwdContext.type === 'self') {
+      if (!oldPwd) return showToast('请输入旧密码', 'error');
+      await apiFetch('/api/user/password', {
+        method: 'PUT',
+        body: JSON.stringify({ old_password: oldPwd, new_password: newPwd })
+      });
+      showToast('密码修改成功，请重新登录！');
+      closePwdModal();
+      setTimeout(logout, 1500);
+    } else {
+      await apiFetch('/api/admin/users/' + pwdContext.targetId + '/password', {
+        method: 'PUT',
+        body: JSON.stringify({ new_password: newPwd })
+      });
+      showToast('用户密码已重置');
+      closePwdModal();
+    }
+  } catch (e) {
+    showToast(e.message, 'error');
+  }
+}
+
+async function loadUsers() {
+  try {
+    const data = await apiFetch('/api/admin/users');
+    const list = document.getElementById('admin-user-list');
+    if (!data.users || data.users.length === 0) {
+      list.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-dim);">无用户</div>';
+      return;
+    }
+    let html = '';
+    data.users.forEach(u => {
+      const isMe = u.username === 'admin';
+      const d = new Date(u.created_at);
+      let btnHtml = '';
+      if (!isMe) {
+        btnHtml = '<button class="btn btn-outline btn-small" style="color:var(--danger); border-color:var(--danger);" onclick="deleteUser(' + u.id + ', \'' + escapeHtml(u.username) + '\')">删除账号</button>';
+      }
+      html += '<div style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid var(--border);">' +
+                '<div>' +
+                  '<div style="font-weight:600;">' + escapeHtml(u.username) + '</div>' +
+                  '<div style="font-size:0.8em; color:var(--text-dim);">注册时间: ' + d.toLocaleString('zh-CN') + '</div>' +
+                '</div>' +
+                '<div style="display:flex; gap:8px;">' +
+                  '<button class="btn btn-outline btn-small" onclick="openPwdModal(' + u.id + ')">重置密码</button>' +
+                  btnHtml +
+                '</div>' +
+              '</div>';
+    });
+    list.innerHTML = html;
+  } catch(e) {
+    showToast('加载用户失败: ' + e.message, 'error');
+  }
+}
+
+async function deleteUser(id, name) {
+  if (!confirm('确定要删除用户 "' + name + '" 吗？这会清空TA所有的记录并强制下线所有该用户的设备！')) return;
+  try {
+    await apiFetch('/api/admin/users/' + id, { method: 'DELETE' });
+    showToast('用户已删除');
+    loadUsers();
+  } catch (e) {
+    showToast('删除失败: ' + e.message, 'error');
+  }
+}
+
+let registrationEnabled = false;
+async function loadSettings() {
+  try {
+    const data = await apiFetch('/api/config');
+    registrationEnabled = data.allow_registration;
+    renderSettings();
+  } catch (e) {
+    showToast('获取设配失败', 'error');
+  }
+}
+
+function renderSettings() {
+  const btn = document.getElementById('toggle-reg-btn');
+  if (registrationEnabled) {
+    btn.textContent = '已开启 (点击关闭)';
+    btn.className = 'btn btn-primary';
+  } else {
+    btn.textContent = '已关闭 (点击开启)';
+    btn.className = 'btn btn-outline';
+  }
+}
+
+async function toggleRegistration() {
+  const nextState = !registrationEnabled;
+  try {
+    await apiFetch('/api/admin/config', {
+      method: 'PUT',
+      body: JSON.stringify({ allow_registration: nextState })
+    });
+    registrationEnabled = nextState;
+    renderSettings();
+    showToast('配置已更新');
+  } catch(e) {
+    showToast('更新失败: ' + e.message, 'error');
+  }
+}
 </script>
 </body>
 </html>`
+
+func handleClearHistory(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	db.Where("user_id = ?", userID).Delete(&ClipEntry{})
+	c.JSON(http.StatusOK, gin.H{"message": "history cleared"})
+}
+
+func handleChangePassword(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	var req ChangePasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var user User
+	if err := db.First(&user, userID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.OldPassword)); err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "incorrect old password"})
+		return
+	}
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	user.PasswordHash = string(hash)
+	db.Save(&user)
+
+	c.JSON(http.StatusOK, gin.H{"message": "password updated successfully"})
+}
+
+// ============================================================================
+// Admin & Config API
+// ============================================================================
+
+func handleGetConfig(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"allow_registration": allowRegistration})
+}
+
+func adminMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		username := c.MustGet("username").(string)
+		if username != "admin" {
+			c.JSON(http.StatusForbidden, gin.H{"error": "admin access required"})
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
+}
+
+func handleUpdateConfig(c *gin.Context) {
+	var req AdminConfigUpdate
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	allowRegistration = req.AllowRegistration
+	valStr := "false"
+	if allowRegistration {
+		valStr = "true"
+	}
+	db.Model(&SystemSetting{}).Where("key = ?", "AllowRegistration").Update("value", valStr)
+
+	c.JSON(http.StatusOK, gin.H{"message": "config updated", "allow_registration": allowRegistration})
+}
+
+func handleAdminGetUsers(c *gin.Context) {
+	type userResponse struct {
+		ID        uint      `json:"id"`
+		Username  string    `json:"username"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	var users []User
+	db.Order("id ASC").Find(&users)
+	
+	var res []userResponse
+	for _, u := range users {
+		res = append(res, userResponse{ID: u.ID, Username: u.Username, CreatedAt: u.CreatedAt})
+	}
+	c.JSON(http.StatusOK, gin.H{"users": res})
+}
+
+func handleAdminDeleteUser(c *gin.Context) {
+	targetID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	if targetID == 1 { // Protect admin
+		c.JSON(http.StatusForbidden, gin.H{"error": "cannot delete default admin"})
+		return
+	}
+
+	// Delete user and their clips
+	db.Where("user_id = ?", targetID).Delete(&ClipEntry{})
+	db.Delete(&User{}, targetID)
+
+	// Disconnect all sessions belonging to this user
+	val, exists := hub.clients.Load(uint(targetID))
+	if exists {
+		for _, client := range *val.(*[]*Client) {
+			// This will trigger force disconnect logic properly
+			client.writeJSON(gin.H{"type": "force_disconnect", "reason": "account deleted by admin"})
+			client.conn.Close()
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "user deleted"})
+}
+
+func handleAdminResetPassword(c *gin.Context) {
+	targetID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	var req AdminPasswordReset
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var user User
+	if err := db.First(&user, targetID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	hash, _ := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	user.PasswordHash = string(hash)
+	db.Save(&user)
+
+	c.JSON(http.StatusOK, gin.H{"message": "user password reset successfully"})
+}
 
 // ============================================================================
 // Main
@@ -1473,6 +1899,7 @@ func main() {
 	// Auth routes
 	r.POST("/api/register", handleRegister)
 	r.POST("/api/login", handleLogin)
+	r.GET("/api/config", handleGetConfig) // Public config
 
 	// WebSocket
 	r.GET("/ws", handleWebSocket)
@@ -1483,9 +1910,20 @@ func main() {
 		api.POST("/clipboard", handlePushClip)
 		api.GET("/clipboard", handleGetHistory)
 		api.DELETE("/clipboard/:id", handleDeleteClip)
+		api.DELETE("/clipboard/all", handleClearHistory) // New clear history route
 		api.GET("/devices", handleGetDevices)
 		api.PUT("/devices/:id/rename", handleRenameDevice)
 		api.DELETE("/devices/:id", handleRemoveDevice)
+		api.PUT("/user/password", handleChangePassword) // New modify password route
+	}
+
+	// Admin routes
+	admin := r.Group("/api/admin", authMiddleware(), adminMiddleware())
+	{
+		admin.GET("/users", handleAdminGetUsers)
+		admin.DELETE("/users/:id", handleAdminDeleteUser)
+		admin.PUT("/users/:id/password", handleAdminResetPassword)
+		admin.PUT("/config", handleUpdateConfig)
 	}
 
 	log.Printf("🚀 ClipSync server starting on %s", listenAddr)

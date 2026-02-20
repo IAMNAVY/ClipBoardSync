@@ -158,15 +158,24 @@ func startSyncServices() {
 		// onForceDisconnect: server forced disconnect
 		func(reason string) {
 			log.Printf("[main] 收到强制下线指令: %s", reason)
-			if clipMon != nil {
-				clipMon.Stop()
-			}
+			stopSyncServices()
+			
+			// Wipe local configuration
+			configLock.Lock()
+			appConfig.Token = ""
+			appConfig.Username = ""
+			configLock.Unlock()
+			SaveConfig(appConfig)
+
 			UpdateTrayStatus(false)
 			trayMu.Lock()
 			if trayStatusItem != nil {
 				trayStatusItem.SetTitle("❌ 强制下线: " + reason)
 			}
 			trayMu.Unlock()
+
+			// Launch configure window
+			go handleReconfigure()
 		},
 	)
 	wsClient.Start()
