@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -75,6 +76,11 @@ func (w *WSClient) buildWSURL() string {
 	u, _ := url.Parse(wsURL + "/ws")
 	q := u.Query()
 	q.Set("token", token)
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		hostname = "Desktop Client"
+	}
+	q.Set("device_name", hostname)
 	u.RawQuery = q.Encode()
 	return u.String()
 }

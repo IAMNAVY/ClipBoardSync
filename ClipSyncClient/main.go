@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"os/exec"
 	"sync"
 )
 
@@ -16,6 +17,24 @@ var (
 func main() {
 	// Set up logging to a file in config dir (best-effort)
 	setupLogging()
+
+	// Handle out-of-process configuration GUI
+	if len(os.Args) > 1 && os.Args[1] == "--config-ui" {
+		cfg, _ := LoadConfig()
+		if cfg == nil {
+			cfg = &AppConfig{}
+		}
+		result := ShowConfigGUI(cfg)
+		if result != nil {
+			cfg.ServerURL = result.ServerURL
+			cfg.Username = result.Username
+			cfg.Token = result.Token
+			if err := SaveConfig(cfg); err != nil {
+				log.Printf("[config-ui] 保存配置失败: %v", err)
+			}
+		}
+		os.Exit(0)
+	}
 
 	log.Println("========================================")
 	log.Println("ClipSyncClient 启动")
@@ -50,23 +69,26 @@ func main() {
 	})
 }
 
-// showConfigAndConnect shows the GUI and updates appConfig on success.
+// showConfigAndConnect spawns a child process for the GUI and reloads config on exit.
 func showConfigAndConnect() {
-	result := ShowConfigGUI(appConfig)
-	if result == nil {
-		return // user cancelled
+	log.Println("[main] 正在启动配置界面(独立进程)...")
+	cmd := exec.Command(os.Args[0], "--config-ui")
+	err := cmd.Run()
+	if err != nil {
+		log.Printf("[main] 配置界面异常退出: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		log.Printf("[main] 重新加载配置失败: %v", err)
+		return
 	}
 
 	configLock.Lock()
-	appConfig.ServerURL = result.ServerURL
-	appConfig.Username = result.Username
-	appConfig.Token = result.Token
-	configLock.Unlock()
-
-	if err := SaveConfig(appConfig); err != nil {
-		log.Printf("[main] 保存配置失败: %v", err)
+	if cfg != nil {
+		appConfig = cfg
 	}
-	log.Printf("[main] 配置已保存: server=%s user=%s", appConfig.ServerURL, appConfig.Username)
+	configLock.Unlock()
 }
 
 // startSyncServices launches the clipboard monitor and WebSocket client.

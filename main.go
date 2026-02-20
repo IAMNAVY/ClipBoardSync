@@ -449,6 +449,11 @@ func handleWebSocket(c *gin.Context) {
 		return
 	}
 
+	deviceName := c.Query("device_name")
+	if deviceName == "" {
+		deviceName = "Web 浏览器"
+	}
+
 	userID, _, err := parseToken(tokenStr)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
@@ -461,14 +466,16 @@ func handleWebSocket(c *gin.Context) {
 		return
 	}
 
-	client := &Client{conn: conn, userID: userID}
+	client := &Client{conn: conn, userID: userID, deviceName: deviceName, connectedAt: time.Now()}
 	hub.register(client)
-	log.Printf("[ws] user %d connected (total devices: %d)", userID, countUserClients(userID))
+	log.Printf("[ws] user %d device '%s' connected (total: %d)", userID, deviceName, countUserClients(userID))
+	hub.broadcastDeviceList(userID)
 
 	defer func() {
 		hub.unregister(client)
 		conn.Close()
-		log.Printf("[ws] user %d disconnected", userID)
+		log.Printf("[ws] user %d device '%s' disconnected (total: %d)", userID, deviceName, countUserClients(userID))
+		hub.broadcastDeviceList(userID)
 	}()
 
 	// Configure ping/pong
@@ -843,6 +850,31 @@ const indexHTML = `<!DOCTYPE html>
 
   /* Icons SVG */
   .icon { width: 1.2em; height: 1.2em; fill: currentColor; }
+
+  /* Device List */
+  .device-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+  }
+  .device-item:last-child { border-bottom: none; }
+  .device-item:hover { background: var(--surface-hover); }
+  .device-icon {
+    width: 40px; height: 40px;
+    border-radius: 10px;
+    background: rgba(59, 130, 246, 0.1);
+    display: flex; align-items: center; justify-content: center;
+    color: var(--accent); flex-shrink: 0;
+  }
+  .device-info { flex: 1; min-width: 0; }
+  .device-name { font-weight: 600; font-size: 0.95em; margin-bottom: 2px; }
+  .device-time { font-size: 0.8em; color: var(--text-dim); }
+  .device-status {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--success); flex-shrink: 0;
+    animation: pulse 2s infinite;
+  }
 </style>
 </head>
 <body>
@@ -885,9 +917,13 @@ const indexHTML = `<!DOCTYPE html>
       </div>
       
       <div class="sidebar-nav">
-        <div class="nav-item active">
+        <div class="nav-item active" id="nav-clipboard" onclick="switchView('clipboard')">
           <svg class="icon" viewBox="0 0 24 24"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
           剪贴板
+        </div>
+        <div class="nav-item" id="nav-devices" onclick="switchView('devices')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
+          在线设备 <span id="device-count-badge" style="margin-left:auto; background:var(--accent); color:#fff; border-radius:99px; padding:1px 8px; font-size:0.75em; font-weight:700;">0</span>
         </div>
       </div>
 
@@ -905,26 +941,45 @@ const indexHTML = `<!DOCTYPE html>
     <!-- Content -->
     <main class="main-content">
       <div class="content-wrapper">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <h2 style="font-size: 1.5em; font-weight: 700;">我的剪贴板</h2>
-          <div class="status-badge" id="ws-badge">
-            <div class="status-dot" id="ws-dot"></div>
-            <span id="ws-status">未连接</span>
+        <!-- Clipboard View -->
+        <div id="view-clipboard">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 style="font-size: 1.5em; font-weight: 700;">我的剪贴板</h2>
+            <div class="status-badge" id="ws-badge">
+              <div class="status-dot" id="ws-dot"></div>
+              <span id="ws-status">未连接</span>
+            </div>
           </div>
-        </div>
 
-        <div class="card">
-          <div class="card-body">
-            <textarea id="clip-input" placeholder="输入你想同步的文本... (支持多行)" style="border:none; padding:0; margin-bottom: 16px; background: transparent; min-height: 80px; box-shadow:none;"></textarea>
-            <div style="display: flex; justify-content: flex-end;">
-              <button class="btn btn-primary btn-small" onclick="pushClip()">推送 (Ctrl+Enter)</button>
+          <div class="card">
+            <div class="card-body">
+              <textarea id="clip-input" placeholder="输入你想同步的文本... (支持多行)" style="border:none; padding:0; margin-bottom: 16px; background: transparent; min-height: 80px; box-shadow:none;"></textarea>
+              <div style="display: flex; justify-content: flex-end;">
+                <button class="btn btn-primary btn-small" onclick="pushClip()">推送 (Ctrl+Enter)</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div id="clip-list">
+              <!-- Inject clips here -->
             </div>
           </div>
         </div>
 
-        <div class="card">
-          <div id="clip-list">
-            <!-- Inject clips here -->
+        <!-- Devices View -->
+        <div id="view-devices" class="hidden">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 style="font-size: 1.5em; font-weight: 700;">在线设备</h2>
+            <div class="status-badge online">
+              <div class="status-dot"></div>
+              <span id="device-total">0 台设备</span>
+            </div>
+          </div>
+          <div class="card">
+            <div id="device-list">
+              <div style="padding: 40px; text-align: center; color: var(--text-dim);">暂无在线设备</div>
+            </div>
           </div>
         </div>
       </div>
@@ -936,6 +991,8 @@ const API = window.location.origin;
 let token = localStorage.getItem('token');
 let username = localStorage.getItem('username');
 let ws = null;
+let intentionalClose = false;
+let currentDevices = [];
 
 // Init
 if (token) showMain();
@@ -1030,7 +1087,9 @@ function logout() {
   token = null; username = null;
   localStorage.removeItem('token');
   localStorage.removeItem('username');
-  if (ws) ws.close();
+  intentionalClose = true;
+  if (ws) { ws.close(); ws = null; }
+  intentionalClose = false;
   
   // Reset fields
   document.getElementById('login-pass').value = '';
@@ -1154,10 +1213,69 @@ async function deleteClip(id) {
   }
 }
 
+function switchView(view) {
+  document.getElementById('nav-clipboard').classList.remove('active');
+  document.getElementById('nav-devices').classList.remove('active');
+  document.getElementById('view-clipboard').classList.add('hidden');
+  document.getElementById('view-devices').classList.add('hidden');
+  document.getElementById('nav-' + view).classList.add('active');
+  document.getElementById('view-' + view).classList.remove('hidden');
+  if (view === 'devices') loadDevices();
+}
+
+async function loadDevices() {
+  try {
+    const data = await apiFetch('/api/devices');
+    renderDevices(data.devices || []);
+  } catch (e) {
+    showToast('加载设备列表失败: ' + e.message, 'error');
+  }
+}
+
+function renderDevices(devices) {
+  currentDevices = devices;
+  const list = document.getElementById('device-list');
+  const countBadge = document.getElementById('device-count-badge');
+  const totalSpan = document.getElementById('device-total');
+  countBadge.textContent = devices.length;
+  totalSpan.textContent = devices.length + ' 台设备';
+  if (!devices.length) {
+    list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-dim);">暂无在线设备</div>';
+    return;
+  }
+  list.innerHTML = '';
+  devices.forEach(d => {
+    const t = new Date(d.connected_at);
+    const timeStr = t.toLocaleTimeString('zh-CN', {hour:'2-digit', minute:'2-digit'});
+    const dateStr = t.toLocaleDateString('zh-CN', {month:'short', day:'numeric'});
+    const isWeb = d.device_name.includes('浏览器') || d.device_name.includes('Web');
+    const iconSvg = isWeb
+      ? '<svg class="icon" viewBox="0 0 24 24" style="width:1.4em;height:1.4em;"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v12z"/></svg>'
+      : '<svg class="icon" viewBox="0 0 24 24" style="width:1.4em;height:1.4em;"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>';
+    const div = document.createElement('div');
+    div.className = 'device-item';
+    div.innerHTML = '<div class="device-icon">' + iconSvg + '</div>'
+      + '<div class="device-info"><div class="device-name">' + escapeHtml(d.device_name) + '</div>'
+      + '<div class="device-time">连接于 ' + dateStr + ' ' + timeStr + '</div></div>'
+      + '<div class="device-status"></div>';
+    list.appendChild(div);
+  });
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
 function connectWS() {
-  if (ws) ws.close();
+  // Close old connection without triggering reconnect
+  intentionalClose = true;
+  if (ws) { ws.close(); ws = null; }
+  intentionalClose = false;
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + token);
+  ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + token + '&device_name=' + encodeURIComponent('Web 浏览器'));
 
   const badge = document.getElementById('ws-badge');
   const status = document.getElementById('ws-status');
@@ -1170,7 +1288,9 @@ function connectWS() {
   ws.onclose = () => {
     badge.classList.remove('online');
     status.textContent = '重连中...';
-    setTimeout(() => { if (token) connectWS(); }, 5000);
+    if (!intentionalClose) {
+      setTimeout(() => { if (token) connectWS(); }, 5000);
+    }
   };
 
   ws.onerror = () => {
@@ -1184,6 +1304,8 @@ function connectWS() {
       if (data.type === 'clip') {
         showToast('收到新内容');
         loadHistory();
+      } else if (data.type === 'devices_update') {
+        renderDevices(data.devices || []);
       }
     } catch {}
   };
