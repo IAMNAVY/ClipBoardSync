@@ -502,219 +502,388 @@ const indexHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ClipSync - 剪贴板同步</title>
+<title>ClipSync</title>
 <style>
   :root {
-    --bg: #0f1117;
-    --surface: #1a1d27;
-    --surface2: #242836;
-    --border: #2e3348;
-    --primary: #6c5ce7;
-    --primary-hover: #7c6ff7;
-    --accent: #00cec9;
-    --text: #e4e6ef;
-    --text-dim: #8b8fa3;
-    --danger: #e17055;
-    --success: #00b894;
-    --radius: 12px;
-    --shadow: 0 4px 24px rgba(0,0,0,.3);
+    /* Light Mode */
+    --bg: #F9FAFB;
+    --surface: #FFFFFF;
+    --surface-hover: #F3F4F6;
+    --border: #E5E7EB;
+    /* Primary deep blue */
+    --primary: #1E3A8A;
+    --primary-hover: #1E40AF;
+    --accent: #3B82F6;
+    --text: #111827;
+    --text-dim: #6B7280;
+    --danger: #EF4444;
+    --success: #10B981;
+    --radius: 8px;
+    --shadow: 0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06);
+    --shadow-hover: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
   }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      /* Dark Mode */
+      --bg: #111827;
+      --surface: #1F2937;
+      --surface-hover: #374151;
+      --border: #374151;
+      --primary: #3B82F6;
+      --primary-hover: #60A5FA;
+      --accent: #60A5FA;
+      --text: #F9FAFB;
+      --text-dim: #9CA3AF;
+      --shadow: 0 4px 6px rgba(0,0,0,0.3);
+      --shadow-hover: 0 10px 15px -1px rgba(0,0,0,0.4);
+    }
+  }
+
   * { margin:0; padding:0; box-sizing:border-box; }
   body {
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
     display: flex;
+    flex-direction: column;
+    letter-spacing: 0.01em;
+  }
+
+  /* Auth Layout (Centered) */
+  .auth-wrapper {
+    display: flex;
+    align-items: center;
     justify-content: center;
-    align-items: flex-start;
+    min-height: 100vh;
     padding: 20px;
   }
-  .container { max-width: 560px; width: 100%; margin-top: 30px; }
-  .logo {
+  .auth-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 32px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: var(--shadow);
+  }
+  .auth-card h1 {
+    font-size: 1.5em;
+    font-weight: 700;
     text-align: center;
-    margin-bottom: 32px;
+    margin-bottom: 8px;
+    color: var(--primary);
   }
-  .logo h1 {
-    font-size: 2em;
-    background: linear-gradient(135deg, var(--primary), var(--accent));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    font-weight: 800;
-    letter-spacing: -1px;
+  .auth-card p.subtitle {
+    text-align: center;
+    color: var(--text-dim);
+    margin-bottom: 24px;
+    font-size: 0.9em;
   }
-  .logo p { color: var(--text-dim); font-size: .9em; margin-top: 4px; }
+  .auth-tabs {
+    display: flex;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .auth-tab {
+    flex: 1;
+    text-align: center;
+    padding: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--text-dim);
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .auth-tab.active {
+    color: var(--primary);
+    border-bottom: 2px solid var(--primary);
+  }
+
+  /* Main Layout (Sidebar + Content) */
+  .app-container {
+    display: flex;
+    min-height: 100vh;
+  }
+  .sidebar {
+    width: 260px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 24px 16px;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .main-content {
+    flex: 1;
+    padding: 32px 40px;
+    width: 100%;
+    display: flex;
+    justify-content: center;
+  }
+  .content-wrapper {
+    width: 100%;
+    max-width: 900px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  @media (max-width: 768px) {
+    .app-container { flex-direction: column; }
+    .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 16px; flex-direction: row; justify-content: space-between; align-items: center; }
+    .main-content { padding: 20px 16px; }
+    .sidebar-logo { margin-bottom: 0 !important; }
+    .sidebar-user { margin-top: 0 !important; }
+    .sidebar-nav { display: none; }
+  }
+
+  .sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 40px;
+  }
+  .sidebar-logo-icon {
+    width: 32px; height: 32px;
+    background: var(--primary);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-weight: bold; font-size: 1.2em;
+  }
+  .sidebar-logo-text { font-size: 1.25em; font-weight: 700; color: var(--text); }
+  
+  .sidebar-nav {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 14px;
+    border-radius: var(--radius);
+    color: var(--text);
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .nav-item.active { background: var(--surface-hover); color: var(--primary); }
+  .nav-item:hover:not(.active) { background: var(--surface-hover); }
+
+  .sidebar-user {
+    margin-top: auto;
+    padding: 16px 14px;
+    background: var(--surface-hover);
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .user-info { display: flex; align-items: center; gap: 10px; }
+  .user-avatar {
+    width: 32px; height: 32px;
+    border-radius: 50%; background: var(--border);
+    display: flex; align-items: center; justify-content: center; font-size: 14px;
+    font-weight: bold; color: var(--text);
+  }
+  .user-name { font-size: 0.9em; font-weight: 600; }
+
+  /* Common Components */
+  input[type="text"], input[type="password"], textarea {
+    width: 100%;
+    padding: 12px 14px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 0.95em;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    margin-bottom: 16px;
+    font-family: inherit;
+  }
+  input:focus, textarea:focus { 
+    border-color: var(--primary); 
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.1); 
+  }
+  @media (prefers-color-scheme: dark) {
+    input:focus, textarea:focus { box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2); }
+  }
+  textarea { resize: vertical; min-height: 100px; }
+  
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 10px 20px;
+    border: none; border-radius: var(--radius);
+    font-size: 0.9em; font-weight: 600;
+    cursor: pointer; transition: all 0.2s; gap: 8px;
+    width: 100%;
+  }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-hover); }
+  .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-outline:hover { background: var(--surface-hover); }
+  .btn-small { padding: 6px 12px; font-size: 0.85em; width: auto; }
+  .btn-icon { 
+    padding: 6px; width: auto; border: 1px solid transparent; border-radius: 6px; 
+    background: transparent; color: var(--text-dim); transition: all 0.2s; 
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+  }
+  .btn-icon:hover { background: var(--surface-hover); color: var(--text); border-color: var(--border); }
+  .btn-icon.danger:hover { color: var(--danger); background: rgba(239, 68, 68, 0.1); border-color: transparent; }
+
   .card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 24px;
-    margin-bottom: 16px;
     box-shadow: var(--shadow);
-  }
-  .card h2 { font-size: 1.1em; margin-bottom: 16px; color: var(--accent); }
-  input[type="text"], input[type="password"], textarea {
-    width: 100%;
-    padding: 12px 14px;
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    font-size: .95em;
-    outline: none;
-    transition: border-color .2s;
-    margin-bottom: 12px;
-  }
-  input:focus, textarea:focus { border-color: var(--primary); }
-  textarea { resize: vertical; min-height: 80px; font-family: inherit; }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 10px 20px;
-    border: none;
-    border-radius: 8px;
-    font-size: .9em;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all .2s;
-    gap: 6px;
-  }
-  .btn-primary { background: var(--primary); color: #fff; }
-  .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); }
-  .btn-accent { background: var(--accent); color: var(--bg); }
-  .btn-accent:hover { opacity: .9; transform: translateY(-1px); }
-  .btn-danger { background: var(--danger); color: #fff; font-size: .8em; padding: 6px 12px; }
-  .btn-danger:hover { opacity: .85; }
-  .btn-small { padding: 6px 14px; font-size: .8em; }
-  .btn-group { display: flex; gap: 8px; }
-  .status-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 16px;
-    background: var(--surface2);
-    border-radius: 8px;
-    margin-bottom: 16px;
-    font-size: .85em;
-  }
-  .status-dot {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--danger);
-    flex-shrink: 0;
-  }
-  .status-dot.online { background: var(--success); animation: pulse 2s infinite; }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: .5; }
-  }
-  .clip-item {
-    background: var(--surface2);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 14px;
-    margin-bottom: 8px;
-    position: relative;
-    transition: border-color .2s;
-  }
-  .clip-item:hover { border-color: var(--primary); }
-  .clip-content {
-    font-size: .9em;
-    white-space: pre-wrap;
-    word-break: break-all;
-    max-height: 120px;
     overflow: hidden;
-    line-height: 1.5;
+  }
+  .card-body { padding: 20px; }
+
+  .status-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 99px;
+    font-size: 0.75em; font-weight: 600;
+    background: var(--surface-hover); color: var(--text-dim);
+  }
+  .status-badge.online { color: var(--success); background: rgba(16, 185, 129, 0.1); }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .status-badge.online .status-dot { animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+
+  /* Clip List */
+  #clip-list { display: flex; flex-direction: column; }
+  .clip-item {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .clip-item:last-child { border-bottom: none; }
+  .clip-item:hover { background: var(--surface-hover); }
+  
+  .clip-content {
+    font-size: 0.95em; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 200px; overflow-y: auto;
     color: var(--text);
   }
+  .clip-content::-webkit-scrollbar { width: 4px; }
+  .clip-content::-webkit-scrollbar-track { background: transparent; }
+  .clip-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  
   .clip-meta {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-top: 8px;
-    font-size: .75em;
-    color: var(--text-dim);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.8em; color: var(--text-dim);
   }
-  .clip-actions { display: flex; gap: 6px; }
+  .clip-actions { display: flex; gap: 8px; opacity: 0; transition: opacity 0.2s; }
+  .clip-item:hover .clip-actions { opacity: 1; }
+  @media (max-width: 768px) { .clip-actions { opacity: 1; } }
+
   .toast {
-    position: fixed;
-    top: 20px;
-    right: 20px;
-    padding: 12px 20px;
-    border-radius: 8px;
-    font-size: .9em;
-    font-weight: 500;
-    z-index: 9999;
-    animation: slideIn .3s ease;
-    color: #fff;
+    position: fixed; bottom: 24px; right: 24px;
+    padding: 12px 20px; border-radius: var(--radius);
+    font-size: 0.9em; font-weight: 500;
+    z-index: 9999; animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    color: #fff; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.2);
   }
-  .toast.success { background: var(--success); }
+  .toast.success { background: var(--text); color: var(--bg); }
   .toast.error { background: var(--danger); }
-  @keyframes slideIn {
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-  }
+  @keyframes slideUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
   .hidden { display: none !important; }
-  .user-info {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-  }
-  .user-info span { color: var(--accent); font-weight: 600; }
-  #clip-list { max-height: 60vh; overflow-y: auto; }
-  #clip-list::-webkit-scrollbar { width: 4px; }
-  #clip-list::-webkit-scrollbar-track { background: transparent; }
-  #clip-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  /* Icons SVG */
+  .icon { width: 1.2em; height: 1.2em; fill: currentColor; }
 </style>
 </head>
 <body>
-<div class="container">
-  <div class="logo">
-    <h1>📋 ClipSync</h1>
-    <p>跨设备剪贴板实时同步</p>
-  </div>
 
-  <!-- Auth Section -->
-  <div id="auth-section">
-    <div class="card">
-      <h2 id="auth-title">🔑 登录</h2>
-      <input type="text" id="username" placeholder="用户名 (至少 2 位)">
-      <input type="password" id="password" placeholder="密码 (至少 6 位)">
-      <div class="btn-group">
+  <!-- Auth View -->
+  <div id="auth-section" class="auth-wrapper">
+    <div class="auth-card">
+      <div style="display: flex; justify-content: center; margin-bottom: 16px;">
+        <div class="sidebar-logo-icon" style="width: 48px; height: 48px; font-size: 1.5em; border-radius: 12px;">CS</div>
+      </div>
+      <h1>ClipSync</h1>
+      <p class="subtitle">跨设备剪贴板实时同步</p>
+      
+      <div class="auth-tabs">
+        <div class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">登录</div>
+        <div class="auth-tab" id="tab-register" onclick="switchAuthTab('register')">注册</div>
+      </div>
+
+      <div id="view-login">
+        <input type="text" id="login-user" placeholder="用户名" onkeypress="handleEnter(event, 'login')">
+        <input type="password" id="login-pass" placeholder="密码" onkeypress="handleEnter(event, 'login')">
         <button class="btn btn-primary" onclick="login()">登录</button>
-        <button class="btn btn-accent" onclick="register()">注册</button>
+      </div>
+
+      <div id="view-register" class="hidden">
+        <input type="text" id="reg-user" placeholder="设置用户名 (至少 2 位)" onkeypress="handleEnter(event, 'register')">
+        <input type="password" id="reg-pass" placeholder="设置密码 (至少 6 位)" onkeypress="handleEnter(event, 'register')">
+        <button class="btn btn-primary" onclick="register()">创建账号</button>
       </div>
     </div>
   </div>
 
-  <!-- Main Section -->
-  <div id="main-section" class="hidden">
-    <div class="user-info">
-      <span>👤 <span id="display-user"></span></span>
-      <button class="btn btn-danger btn-small" onclick="logout()">退出登录</button>
-    </div>
+  <!-- Main View -->
+  <div id="main-section" class="app-container hidden">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-logo">
+        <div class="sidebar-logo-icon">CS</div>
+        <div class="sidebar-logo-text">ClipSync</div>
+      </div>
+      
+      <div class="sidebar-nav">
+        <div class="nav-item active">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M19 3h-4.18C14.4 1.84 13.3 1 12 1c-1.3 0-2.4.84-2.82 2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 0c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm2 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+          剪贴板
+        </div>
+      </div>
 
-    <div class="status-bar">
-      <div class="status-dot" id="ws-dot"></div>
-      <span id="ws-status">未连接</span>
-    </div>
+      <div class="sidebar-user">
+        <div class="user-info">
+          <div class="user-avatar" id="avatar-letter">U</div>
+          <div class="user-name" id="display-user"></div>
+        </div>
+        <button class="btn-icon danger" onclick="logout()" title="退出登录">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></svg>
+        </button>
+      </div>
+    </aside>
 
-    <!-- Push Clipboard -->
-    <div class="card">
-      <h2>📤 推送剪贴板</h2>
-      <textarea id="clip-input" placeholder="输入要同步的内容..."></textarea>
-      <button class="btn btn-primary" onclick="pushClip()">发送到所有设备</button>
-    </div>
+    <!-- Content -->
+    <main class="main-content">
+      <div class="content-wrapper">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h2 style="font-size: 1.5em; font-weight: 700;">我的剪贴板</h2>
+          <div class="status-badge" id="ws-badge">
+            <div class="status-dot" id="ws-dot"></div>
+            <span id="ws-status">未连接</span>
+          </div>
+        </div>
 
-    <!-- History -->
-    <div class="card">
-      <h2>📜 历史记录</h2>
-      <div id="clip-list"></div>
-    </div>
+        <div class="card">
+          <div class="card-body">
+            <textarea id="clip-input" placeholder="输入你想同步的文本... (支持多行)" style="border:none; padding:0; margin-bottom: 16px; background: transparent; min-height: 80px; box-shadow:none;"></textarea>
+            <div style="display: flex; justify-content: flex-end;">
+              <button class="btn btn-primary btn-small" onclick="pushClip()">推送 (Ctrl+Enter)</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div id="clip-list">
+            <!-- Inject clips here -->
+          </div>
+        </div>
+      </div>
+    </main>
   </div>
-</div>
 
 <script>
 const API = window.location.origin;
@@ -725,12 +894,40 @@ let ws = null;
 // Init
 if (token) showMain();
 
+function switchAuthTab(tab) {
+  document.getElementById('tab-login').classList.remove('active');
+  document.getElementById('tab-register').classList.remove('active');
+  document.getElementById('view-login').classList.add('hidden');
+  document.getElementById('view-register').classList.add('hidden');
+  
+  document.getElementById('tab-' + tab).classList.add('active');
+  document.getElementById('view-' + tab).classList.remove('hidden');
+}
+
+function handleEnter(e, action) {
+  if (e.key === 'Enter') {
+    if (action === 'login') login();
+    if (action === 'register') register();
+  }
+}
+
+document.getElementById('clip-input').addEventListener('keydown', function(e) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    pushClip();
+  }
+});
+
 function showToast(msg, type='success') {
   const t = document.createElement('div');
   t.className = 'toast ' + type;
   t.textContent = msg;
   document.body.appendChild(t);
-  setTimeout(() => t.remove(), 3000);
+  setTimeout(() => {
+    t.style.opacity = '0';
+    t.style.transform = 'translateY(100%)';
+    t.style.transition = 'all 0.3s';
+    setTimeout(() => t.remove(), 300);
+  }, 3000);
 }
 
 async function apiFetch(path, opts={}) {
@@ -738,23 +935,20 @@ async function apiFetch(path, opts={}) {
   if (token) headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch(API + path, { ...opts, headers });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'request failed');
+  if (!res.ok) throw new Error(data.error || '请求失败');
   return data;
 }
 
 async function register() {
-  const u = document.getElementById('username').value.trim();
-  const p = document.getElementById('password').value;
-  if (!u || !p) return showToast('请填写用户名和密码', 'error');
+  const u = document.getElementById('reg-user').value.trim();
+  const p = document.getElementById('reg-pass').value;
+  if (!u || !p) return showToast('请输入用户名和密码', 'error');
   try {
     const data = await apiFetch('/api/register', {
       method: 'POST',
       body: JSON.stringify({ username: u, password: p })
     });
-    token = data.token;
-    username = data.username;
-    localStorage.setItem('token', token);
-    localStorage.setItem('username', username);
+    setAuth(data);
     showToast('注册成功！');
     showMain();
   } catch (e) {
@@ -763,18 +957,15 @@ async function register() {
 }
 
 async function login() {
-  const u = document.getElementById('username').value.trim();
-  const p = document.getElementById('password').value;
-  if (!u || !p) return showToast('请填写用户名和密码', 'error');
+  const u = document.getElementById('login-user').value.trim();
+  const p = document.getElementById('login-pass').value;
+  if (!u || !p) return showToast('请输入用户名和密码', 'error');
   try {
     const data = await apiFetch('/api/login', {
       method: 'POST',
       body: JSON.stringify({ username: u, password: p })
     });
-    token = data.token;
-    username = data.username;
-    localStorage.setItem('token', token);
-    localStorage.setItem('username', username);
+    setAuth(data);
     showToast('登录成功！');
     showMain();
   } catch (e) {
@@ -782,12 +973,24 @@ async function login() {
   }
 }
 
+function setAuth(data) {
+  token = data.token;
+  username = data.username;
+  localStorage.setItem('token', token);
+  localStorage.setItem('username', username);
+}
+
 function logout() {
-  token = null;
-  username = null;
+  token = null; username = null;
   localStorage.removeItem('token');
   localStorage.removeItem('username');
   if (ws) ws.close();
+  
+  // Reset fields
+  document.getElementById('login-pass').value = '';
+  document.getElementById('reg-pass').value = '';
+  document.getElementById('clip-input').value = '';
+  
   document.getElementById('auth-section').classList.remove('hidden');
   document.getElementById('main-section').classList.add('hidden');
 }
@@ -796,9 +999,13 @@ function showMain() {
   document.getElementById('auth-section').classList.add('hidden');
   document.getElementById('main-section').classList.remove('hidden');
   document.getElementById('display-user').textContent = username;
+  document.getElementById('avatar-letter').textContent = username.charAt(0).toUpperCase();
   loadHistory();
   connectWS();
 }
+
+function copyIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>'; }
+function trashIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>'; }
 
 async function loadHistory() {
   try {
@@ -812,30 +1019,52 @@ async function loadHistory() {
 function renderClips(entries) {
   const list = document.getElementById('clip-list');
   if (!entries.length) {
-    list.innerHTML = '<p style="color:var(--text-dim);text-align:center;padding:20px">暂无记录</p>';
+    list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-dim);">暂无剪贴板记录</div>';
     return;
   }
-  list.innerHTML = entries.map(e => {
-    const time = new Date(e.created_at).toLocaleString('zh-CN');
-    const preview = e.content.length > 200 ? e.content.substring(0, 200) + '...' : e.content;
-    return '<div class="clip-item">' +
-      '<div class="clip-content">' + escapeHtml(preview) + '</div>' +
-      '<div class="clip-meta"><span>' + time + '</span>' +
-      '<div class="clip-actions">' +
-      '<button class="btn btn-primary btn-small" onclick="copyClip(\'' + escapeJs(e.content) + '\')">📋 复制</button>' +
-      '<button class="btn btn-danger btn-small" onclick="deleteClip(' + e.id + ')">🗑️</button>' +
-      '</div></div></div>';
-  }).join('');
-}
+  
+  list.innerHTML = '';
+  entries.forEach(e => {
+    // Relative time approx
+    const d = new Date(e.created_at);
+    const timeStr = d.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
+    const dateStr = d.toLocaleDateString('zh-CN', {month: 'short', day: 'numeric'});
 
-function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
-}
+    const div = document.createElement('div');
+    div.className = 'clip-item';
+    
+    // Header
+    const meta = document.createElement('div');
+    meta.className = 'clip-meta';
+    meta.innerHTML = '<span>' + dateStr + ' ' + timeStr + '</span>';
+    
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'clip-actions';
+    
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'btn-icon'; copyBtn.title = '复制';
+    copyBtn.innerHTML = copyIcon();
+    copyBtn.onclick = () => copyClip(e.content);
+    
+    const delBtn = document.createElement('button');
+    delBtn.className = 'btn-icon danger'; delBtn.title = '删除';
+    delBtn.innerHTML = trashIcon();
+    delBtn.onclick = () => deleteClip(e.id);
+    
+    actions.appendChild(copyBtn);
+    actions.appendChild(delBtn);
+    meta.appendChild(actions);
 
-function escapeJs(str) {
-  return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+    // Content
+    const content = document.createElement('div');
+    content.className = 'clip-content';
+    content.textContent = e.content; // textContent escapes HTML safely
+
+    div.appendChild(content);
+    div.appendChild(meta);
+    list.appendChild(div);
+  });
 }
 
 async function pushClip() {
@@ -860,7 +1089,6 @@ async function copyClip(text) {
     await navigator.clipboard.writeText(text);
     showToast('已复制到剪贴板');
   } catch {
-    // Fallback
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.appendChild(ta);
@@ -874,7 +1102,6 @@ async function copyClip(text) {
 async function deleteClip(id) {
   try {
     await apiFetch('/api/clipboard/' + id, { method: 'DELETE' });
-    showToast('已删除');
     loadHistory();
   } catch (e) {
     showToast('删除失败: ' + e.message, 'error');
@@ -886,22 +1113,22 @@ function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + token);
 
-  const dot = document.getElementById('ws-dot');
+  const badge = document.getElementById('ws-badge');
   const status = document.getElementById('ws-status');
 
   ws.onopen = () => {
-    dot.classList.add('online');
-    status.textContent = '已连接 — 实时同步中';
+    badge.classList.add('online');
+    status.textContent = '已连接';
   };
 
   ws.onclose = () => {
-    dot.classList.remove('online');
-    status.textContent = '连接断开，5秒后重连...';
+    badge.classList.remove('online');
+    status.textContent = '重连中...';
     setTimeout(() => { if (token) connectWS(); }, 5000);
   };
 
   ws.onerror = () => {
-    dot.classList.remove('online');
+    badge.classList.remove('online');
     status.textContent = '连接错误';
   };
 
@@ -909,7 +1136,7 @@ function connectWS() {
     try {
       const data = JSON.parse(event.data);
       if (data.type === 'clip') {
-        showToast('收到新的剪贴板内容');
+        showToast('收到新内容');
         loadHistory();
       }
     } catch {}
