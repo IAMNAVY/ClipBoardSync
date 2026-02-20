@@ -71,7 +71,8 @@ type LoginRequest struct {
 }
 
 type ClipRequest struct {
-	Content string `json:"content" binding:"required"`
+	Content    string `json:"content" binding:"required"`
+	DeviceName string `json:"device_name"`
 }
 
 // ============================================================================
@@ -388,10 +389,14 @@ func handlePushClip(c *gin.Context) {
 		return
 	}
 
+	devName := req.DeviceName
+	if devName == "" {
+		devName = "Web \u6d4f\u89c8\u5668"
+	}
 	entry := ClipEntry{
 		UserID:     userID,
 		Content:    req.Content,
-		DeviceName: "Web \u6d4f\u89c8\u5668",
+		DeviceName: devName,
 	}
 	if err := db.Create(&entry).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save clipboard"})
@@ -505,6 +510,8 @@ func handleRemoveDevice(c *gin.Context) {
 		return
 	}
 
+	// Send force_disconnect so the client knows not to auto-reconnect
+	client.writeJSON(gin.H{"type": "force_disconnect", "reason": "removed by user"})
 	// Close the connection — the defer in handleWebSocket will unregister and broadcast
 	client.conn.Close()
 	log.Printf("[ws] user %d removed device %d '%s'", userID, clientID, client.deviceName)
@@ -763,11 +770,11 @@ const indexHTML = `<!DOCTYPE html>
 
   @media (max-width: 768px) {
     .app-container { flex-direction: column; }
-    .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 16px; flex-direction: row; justify-content: space-between; align-items: center; }
+    .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 16px; flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 16px; }
     .main-content { padding: 20px 16px; }
     .sidebar-logo { margin-bottom: 0 !important; }
     .sidebar-user { margin-top: 0 !important; }
-    .sidebar-nav { display: none; }
+    .sidebar-nav { display: flex; flex-direction: row; gap: 8px; justify-content: center; }
   }
 
   .sidebar-logo {
@@ -1071,6 +1078,8 @@ let username = localStorage.getItem('username');
 let ws = null;
 let intentionalClose = false;
 let currentDevices = [];
+let currentDeviceID = null;
+let currentDeviceName = 'Web 浏览器';
 
 // Init
 if (token) showMain();
@@ -1260,7 +1269,7 @@ async function pushClip() {
   try {
     await apiFetch('/api/clipboard', {
       method: 'POST',
-      body: JSON.stringify({ content })
+      body: JSON.stringify({ content, device_name: currentDeviceName })
     });
     input.value = '';
     showToast('已推送到所有设备');
@@ -1333,14 +1342,22 @@ function renderDevices(devices) {
     const iconSvg = isWeb
       ? '<svg class="icon" viewBox="0 0 24 24" style="width:1.4em;height:1.4em;"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V8h16v12z"/></svg>'
       : '<svg class="icon" viewBox="0 0 24 24" style="width:1.4em;height:1.4em;"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>';
+    const isMe = currentDeviceID && (d.id === currentDeviceID);
+    const meTag = isMe ? '<span style="color:var(--accent); font-size:0.8em; margin-left:8px;">(当前设备)</span>' : '';
+    
     const div = document.createElement('div');
     div.className = 'device-item';
+    
+    let btns = '<button class="btn-icon" title="重命名" onclick="renameDevice(' + d.id + ', \'' + escapeHtml(d.device_name).replace(/'/g, "\\'") + '\')">' + editIcon() + '</button>';
+    if (!isMe) {
+      btns += '<button class="btn-icon danger" title="移除" onclick="removeDevice(' + d.id + ')">' + closeIcon() + '</button>';
+    }
+
     div.innerHTML = '<div class="device-icon">' + iconSvg + '</div>'
-      + '<div class="device-info"><div class="device-name">' + escapeHtml(d.device_name) + '</div>'
+      + '<div class="device-info"><div class="device-name">' + escapeHtml(d.device_name) + meTag + '</div>'
       + '<div class="device-time">连接于 ' + dateStr + ' ' + timeStr + '</div></div>'
       + '<div style="display:flex;gap:4px;align-items:center;">'
-      + '<button class="btn-icon" title="重命名" onclick="renameDevice(' + d.id + ',\'' + escapeHtml(d.device_name).replace(/'/g, "\\'") + '\')">' + editIcon() + '</button>'
-      + '<button class="btn-icon danger" title="移除" onclick="removeDevice(' + d.id + ')">' + closeIcon() + '</button>'
+      + btns
       + '</div>'
       + '<div class="device-status"></div>';
     list.appendChild(div);
@@ -1413,8 +1430,20 @@ function connectWS() {
       if (data.type === 'clip') {
         showToast('收到新内容');
         loadHistory();
+      } else if (data.type === 'welcome') {
+        currentDeviceID = data.client_id;
       } else if (data.type === 'devices_update') {
+        // Find our own device to update our local currentDeviceName
+        if (currentDeviceID) {
+          const me = (data.devices || []).find(d => d.id === currentDeviceID);
+          if (me && me.device_name) currentDeviceName = me.device_name;
+        }
         renderDevices(data.devices || []);
+      } else if (data.type === 'force_disconnect') {
+        intentionalClose = true;
+        showToast('本设备已被移除，正在登出...', 'error');
+        if (ws) { ws.close(); ws = null; }
+        setTimeout(logout, 1500);
       }
     } catch {}
   };

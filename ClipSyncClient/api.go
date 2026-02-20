@@ -59,9 +59,10 @@ func Login(serverURL, username, password string) (string, error) {
 }
 
 // PushClipboard sends clipboard content to the server.
-func PushClipboard(serverURL, token, content string) error {
+func PushClipboard(serverURL, token, content, deviceName string) error {
 	body, _ := json.Marshal(map[string]string{
-		"content": content,
+		"content":     content,
+		"device_name": deviceName,
 	})
 
 	req, err := http.NewRequest("POST", serverURL+"/api/clipboard", bytes.NewReader(body))

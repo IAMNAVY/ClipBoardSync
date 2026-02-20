@@ -22,23 +22,27 @@ type WSClient struct {
 
 	clientID uint64 // assigned by server via welcome message
 
-	onClip          func(content string) // called when a remote clip is received
-	onStatus        func(connected bool) // called on connection status change
-	onDeviceRenamed func(newName string) // called when server renames this device
+	onClip            func(content string) // called when a remote clip is received
+	onStatus          func(connected bool) // called on connection status change
+	onDeviceRenamed   func(newName string) // called when server renames this device
+	onForceDisconnect func(reason string)  // called on server force disconnect
+
+	forceDisconnected bool // set when server sends force_disconnect
 
 	stopCh chan struct{}
 	done   chan struct{}
 }
 
 // NewWSClient creates a new WebSocket client.
-func NewWSClient(serverURL, token, deviceName string, onClip func(string), onStatus func(bool), onDeviceRenamed func(string)) *WSClient {
+func NewWSClient(serverURL, token, deviceName string, onClip func(string), onStatus func(bool), onDeviceRenamed func(string), onForceDisconnect func(string)) *WSClient {
 	return &WSClient{
-		serverURL:       serverURL,
-		token:           token,
-		deviceName:      deviceName,
-		onClip:          onClip,
-		onStatus:        onStatus,
-		onDeviceRenamed: onDeviceRenamed,
+		serverURL:         serverURL,
+		token:             token,
+		deviceName:        deviceName,
+		onClip:            onClip,
+		onStatus:          onStatus,
+		onDeviceRenamed:   onDeviceRenamed,
+		onForceDisconnect: onForceDisconnect,
 		stopCh:          make(chan struct{}),
 		done:            make(chan struct{}),
 	}
@@ -106,6 +110,15 @@ func (w *WSClient) connectLoop() {
 		}
 		if w.onStatus != nil {
 			w.onStatus(false)
+		}
+
+		// If force disconnected by server, stop reconnecting
+		w.mu.Lock()
+		forced := w.forceDisconnected
+		w.mu.Unlock()
+		if forced {
+			log.Println("[ws] 服务端强制下线，停止重连")
+			return
 		}
 
 		// Wait before reconnecting
@@ -215,6 +228,19 @@ func (w *WSClient) connectAndListen() error {
 		case "devices_update":
 			// Check if server renamed this device
 			w.handleDevicesUpdate(msg)
+
+		case "force_disconnect":
+			reason, _ := msg["reason"].(string)
+			log.Printf("[ws] 服务端强制下线: %s", reason)
+			w.mu.Lock()
+			w.forceDisconnected = true
+			cb := w.onForceDisconnect
+			w.mu.Unlock()
+			if cb != nil {
+				// Call asynchronously to avoid blocking the read loop exit
+				go cb(reason)
+			}
+			return nil // exit read loop, connectLoop will see forceDisconnected
 		}
 	}
 }

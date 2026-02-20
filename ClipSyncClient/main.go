@@ -122,9 +122,10 @@ func startSyncServices() {
 		configLock.Lock()
 		s := appConfig.ServerURL
 		t := appConfig.Token
+		d := GetDeviceName(appConfig)
 		configLock.Unlock()
 
-		if err := PushClipboard(s, t, content); err != nil {
+		if err := PushClipboard(s, t, content, d); err != nil {
 			log.Printf("[main] 上传剪贴板失败: %v", err)
 		} else {
 			log.Println("[main] 剪贴板内容已上传")
@@ -153,6 +154,19 @@ func startSyncServices() {
 				log.Printf("[main] 保存设备名失败: %v", err)
 			}
 			UpdateTrayDeviceName(newName)
+		},
+		// onForceDisconnect: server forced disconnect
+		func(reason string) {
+			log.Printf("[main] 收到强制下线指令: %s", reason)
+			if clipMon != nil {
+				clipMon.Stop()
+			}
+			UpdateTrayStatus(false)
+			trayMu.Lock()
+			if trayStatusItem != nil {
+				trayStatusItem.SetTitle("❌ 强制下线: " + reason)
+			}
+			trayMu.Unlock()
 		},
 	)
 	wsClient.Start()
