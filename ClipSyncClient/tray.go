@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"sync"
 
 	"github.com/getlantern/systray"
 )
@@ -13,9 +14,12 @@ type trayCallbacks struct {
 }
 
 var (
-	trayStatusItem   *systray.MenuItem
+	trayStatusItem    *systray.MenuItem
 	trayAutoStartItem *systray.MenuItem
-	trayCbs          *trayCallbacks
+	trayCbs           *trayCallbacks
+	trayReady         bool
+	cachedConnected   bool
+	trayMu            sync.Mutex
 )
 
 // StartTray initializes the system tray. This blocks the calling goroutine.
@@ -26,9 +30,18 @@ func StartTray(cbs *trayCallbacks) {
 
 // UpdateTrayStatus updates the status display in the tray menu.
 func UpdateTrayStatus(connected bool) {
-	if trayStatusItem == nil {
+	trayMu.Lock()
+	cachedConnected = connected
+	ready := trayReady
+	trayMu.Unlock()
+
+	if !ready || trayStatusItem == nil {
 		return
 	}
+	applyTrayStatus(connected)
+}
+
+func applyTrayStatus(connected bool) {
 	if connected {
 		trayStatusItem.SetTitle("● 已连接 (Connected)")
 	} else {
@@ -44,6 +57,13 @@ func onTrayReady() {
 	// Status (disabled — just for display)
 	trayStatusItem = systray.AddMenuItem("○ 未连接 (Disconnected)", "WebSocket 连接状态")
 	trayStatusItem.Disable()
+
+	// Mark tray as ready and apply any cached status
+	trayMu.Lock()
+	trayReady = true
+	status := cachedConnected
+	trayMu.Unlock()
+	applyTrayStatus(status)
 
 	systray.AddSeparator()
 

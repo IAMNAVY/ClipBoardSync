@@ -144,9 +144,11 @@ var upgrader = websocket.Upgrader{
 }
 
 type Client struct {
-	conn   *websocket.Conn
-	userID uint
-	mu     sync.Mutex
+	conn        *websocket.Conn
+	userID      uint
+	deviceName  string
+	connectedAt time.Time
+	mu          sync.Mutex
 }
 
 func (c *Client) writeJSON(v interface{}) error {
@@ -200,6 +202,31 @@ func (h *Hub) broadcast(userID uint, msg interface{}, sender *Client) {
 		if c == sender {
 			continue
 		}
+		if err := c.writeJSON(msg); err != nil {
+			log.Printf("[ws] write error for user %d: %v", userID, err)
+		}
+	}
+}
+
+// broadcastDeviceList sends the current device list to ALL connections of a user
+func (h *Hub) broadcastDeviceList(userID uint) {
+	val, ok := h.clients.Load(userID)
+	if !ok {
+		return
+	}
+	list := val.(*[]*Client)
+	devices := make([]gin.H, 0, len(*list))
+	for _, c := range *list {
+		devices = append(devices, gin.H{
+			"device_name":  c.deviceName,
+			"connected_at": c.connectedAt,
+		})
+	}
+	msg := gin.H{
+		"type":    "devices_update",
+		"devices": devices,
+	}
+	for _, c := range *list {
 		if err := c.writeJSON(msg); err != nil {
 			log.Printf("[ws] write error for user %d: %v", userID, err)
 		}
@@ -390,6 +417,25 @@ func handleDeleteClip(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
+func handleGetDevices(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+
+	val, ok := hub.clients.Load(userID)
+	if !ok {
+		c.JSON(http.StatusOK, gin.H{"devices": []gin.H{}, "count": 0})
+		return
+	}
+	list := val.(*[]*Client)
+	devices := make([]gin.H, 0, len(*list))
+	for _, cl := range *list {
+		devices = append(devices, gin.H{
+			"device_name":  cl.deviceName,
+			"connected_at": cl.connectedAt,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"devices": devices, "count": len(devices)})
 }
 
 // ============================================================================
@@ -1177,6 +1223,7 @@ func main() {
 		api.POST("/clipboard", handlePushClip)
 		api.GET("/clipboard", handleGetHistory)
 		api.DELETE("/clipboard/:id", handleDeleteClip)
+		api.GET("/devices", handleGetDevices)
 	}
 
 	log.Printf("🚀 ClipSync server starting on %s", listenAddr)
