@@ -727,7 +727,8 @@ const indexHTML = `<!DOCTYPE html>
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     background: var(--bg);
     color: var(--text);
-    min-height: 100vh;
+    height: 100vh;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     letter-spacing: 0.01em;
@@ -738,7 +739,8 @@ const indexHTML = `<!DOCTYPE html>
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 100vh;
+    height: 100%;
+    overflow-y: auto;
     padding: 20px;
   }
   .auth-card {
@@ -786,7 +788,8 @@ const indexHTML = `<!DOCTYPE html>
   /* Main Layout (Sidebar + Content) */
   .app-container {
     display: flex;
-    min-height: 100vh;
+    flex: 1;
+    overflow: hidden;
   }
   .sidebar {
     width: 260px;
@@ -796,6 +799,7 @@ const indexHTML = `<!DOCTYPE html>
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
+    overflow-y: auto;
   }
   .main-content {
     flex: 1;
@@ -803,6 +807,7 @@ const indexHTML = `<!DOCTYPE html>
     width: 100%;
     display: flex;
     justify-content: center;
+    overflow-y: auto;
   }
   .content-wrapper {
     width: 100%;
