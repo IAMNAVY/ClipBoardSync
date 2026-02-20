@@ -1,0 +1,97 @@
+package main
+
+import (
+	"log"
+
+	"github.com/getlantern/systray"
+)
+
+// trayCallbacks holds the callbacks for tray menu actions.
+type trayCallbacks struct {
+	onReconfigure func()
+	onQuit        func()
+}
+
+var (
+	trayStatusItem   *systray.MenuItem
+	trayAutoStartItem *systray.MenuItem
+	trayCbs          *trayCallbacks
+)
+
+// StartTray initializes the system tray. This blocks the calling goroutine.
+func StartTray(cbs *trayCallbacks) {
+	trayCbs = cbs
+	systray.Run(onTrayReady, onTrayExit)
+}
+
+// UpdateTrayStatus updates the status display in the tray menu.
+func UpdateTrayStatus(connected bool) {
+	if trayStatusItem == nil {
+		return
+	}
+	if connected {
+		trayStatusItem.SetTitle("● 已连接 (Connected)")
+	} else {
+		trayStatusItem.SetTitle("○ 未连接 (Disconnected)")
+	}
+}
+
+func onTrayReady() {
+	systray.SetIcon(iconBytes)
+	systray.SetTitle("ClipSync")
+	systray.SetTooltip("ClipSync - 剪贴板同步")
+
+	// Status (disabled — just for display)
+	trayStatusItem = systray.AddMenuItem("○ 未连接 (Disconnected)", "WebSocket 连接状态")
+	trayStatusItem.Disable()
+
+	systray.AddSeparator()
+
+	// Auto-start toggle
+	trayAutoStartItem = systray.AddMenuItemCheckbox(
+		"开机启动 (Auto-Start)",
+		"设置开机自动启动",
+		IsAutoStartEnabled(),
+	)
+
+	// Reconfigure
+	mReconfigure := systray.AddMenuItem("重新配置 (Reconfigure)", "重新输入服务器信息")
+
+	systray.AddSeparator()
+
+	// Quit
+	mQuit := systray.AddMenuItem("退出 (Quit)", "退出程序")
+
+	// Event handling
+	go func() {
+		for {
+			select {
+			case <-trayAutoStartItem.ClickedCh:
+				if trayAutoStartItem.Checked() {
+					trayAutoStartItem.Uncheck()
+					if err := DisableAutoStart(); err != nil {
+						log.Printf("[tray] 禁用开机启动失败: %v", err)
+					}
+				} else {
+					trayAutoStartItem.Check()
+					if err := EnableAutoStart(); err != nil {
+						log.Printf("[tray] 启用开机启动失败: %v", err)
+					}
+				}
+			case <-mReconfigure.ClickedCh:
+				if trayCbs != nil && trayCbs.onReconfigure != nil {
+					trayCbs.onReconfigure()
+				}
+			case <-mQuit.ClickedCh:
+				if trayCbs != nil && trayCbs.onQuit != nil {
+					trayCbs.onQuit()
+				}
+				systray.Quit()
+			}
+		}
+	}()
+}
+
+func onTrayExit() {
+	log.Println("[tray] 系统托盘已退出")
+}

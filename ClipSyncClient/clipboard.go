@@ -1,0 +1,117 @@
+package main
+
+import (
+	"log"
+	"sync"
+	"time"
+
+	"github.com/atotto/clipboard"
+)
+
+// ClipMonitor polls the system clipboard and detects changes.
+// It implements an anti-loop mechanism to avoid re-uploading content
+// that was just written by the WebSocket client.
+type ClipMonitor struct {
+	onNewClip func(content string) // called when a user-initiated copy is detected
+
+	mu               sync.Mutex
+	lastContent      string // last known clipboard content
+	lastRemoteWrite  string // content that was written by the WS client
+	skipNextChange   bool   // flag to skip the very next change detection
+
+	stopCh chan struct{}
+	done   chan struct{}
+}
+
+// NewClipMonitor creates a new clipboard monitor.
+func NewClipMonitor(onNewClip func(string)) *ClipMonitor {
+	return &ClipMonitor{
+		onNewClip: onNewClip,
+		stopCh:    make(chan struct{}),
+		done:      make(chan struct{}),
+	}
+}
+
+// Start begins polling the clipboard in a goroutine.
+func (m *ClipMonitor) Start() {
+	// Read initial clipboard content so we don't upload pre-existing content
+	if content, err := clipboard.ReadAll(); err == nil {
+		m.lastContent = content
+	}
+	go m.pollLoop()
+}
+
+// Stop ends the polling loop.
+func (m *ClipMonitor) Stop() {
+	close(m.stopCh)
+	<-m.done
+}
+
+// WriteClipboard writes content from a remote source to the local clipboard.
+// It sets the anti-loop flag so the monitor will not re-upload this content.
+func (m *ClipMonitor) WriteClipboard(content string) {
+	m.mu.Lock()
+	m.lastRemoteWrite = content
+	m.skipNextChange = true
+	m.lastContent = content
+	m.mu.Unlock()
+
+	if err := clipboard.WriteAll(content); err != nil {
+		log.Printf("[clip] 写入剪贴板失败: %v", err)
+	} else {
+		log.Printf("[clip] 已将远程内容写入剪贴板 (%d 字符)", len(content))
+	}
+}
+
+func (m *ClipMonitor) pollLoop() {
+	defer close(m.done)
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCh:
+			return
+		case <-ticker.C:
+			m.checkClipboard()
+		}
+	}
+}
+
+func (m *ClipMonitor) checkClipboard() {
+	content, err := clipboard.ReadAll()
+	if err != nil {
+		return // clipboard may be locked by another app, just skip
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// No change
+	if content == m.lastContent {
+		return
+	}
+
+	m.lastContent = content
+
+	// Anti-loop: if this content was just written by the remote, skip it
+	if m.skipNextChange {
+		m.skipNextChange = false
+		if content == m.lastRemoteWrite {
+			log.Println("[clip] 跳过远程写入内容，防止死循环")
+			return
+		}
+	}
+
+	// Empty content, skip
+	if content == "" {
+		return
+	}
+
+	log.Printf("[clip] 检测到剪贴板变更 (%d 字符)，准备上传", len(content))
+	if m.onNewClip != nil {
+		// Call asynchronously to avoid blocking the poll loop
+		go m.onNewClip(content)
+	}
+}
