@@ -957,6 +957,11 @@ const indexHTML = `<!DOCTYPE html>
   .clip-content::-webkit-scrollbar-track { background: transparent; }
   .clip-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
   
+  /* Input Custom Scrollbar styling so it only shows when expanded */
+  #clip-input::-webkit-scrollbar { width: 6px; }
+  #clip-input::-webkit-scrollbar-track { background: transparent; }
+  #clip-input::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  
   .clip-meta {
     display: flex; justify-content: space-between; align-items: center;
     font-size: 0.8em; color: var(--text-dim);
@@ -1115,10 +1120,13 @@ const indexHTML = `<!DOCTYPE html>
             </div>
           </div>
 
-          <div class="card">
+          <div class="card" style="margin-bottom: 24px;">
             <div class="card-body">
-              <textarea id="clip-input" placeholder="输入你想同步的文本... (支持多行)" style="border:none; padding:0; margin-bottom: 16px; background: transparent; min-height: 80px; box-shadow:none;"></textarea>
-              <div style="display: flex; justify-content: flex-end;">
+              <textarea id="clip-input" placeholder="输入你想同步的文本... (支持多行)" style="border:none; padding:0; margin-bottom: 16px; background: transparent; height: 80px; min-height: 80px; resize: none; box-shadow:none; overflow-y: hidden;"></textarea>
+              <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                <button id="expand-btn" class="btn-icon hidden" title="展开" onclick="toggleExpandInput()">
+                  <svg class="icon" viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>
+                </button>
                 <button class="btn btn-primary btn-small" onclick="pushClip()">推送 (Ctrl+Enter)</button>
               </div>
             </div>
@@ -1316,6 +1324,11 @@ function logout() {
   document.getElementById('reg-pass').value = '';
   document.getElementById('clip-input').value = '';
   
+  // Re-fetch config to apply registration visibility state
+  document.getElementById('tab-register').classList.remove('hidden');
+  initApp();
+  switchAuthTab('login');
+  
   document.getElementById('auth-section').classList.remove('hidden');
   document.getElementById('main-section').classList.add('hidden');
 }
@@ -1333,6 +1346,47 @@ function switchView(view) {
   if (view === 'users') loadUsers();
   if (view === 'settings') loadSettings();
 }
+
+function toggleExpandInput() {
+  const input = document.getElementById('clip-input');
+  const btn = document.getElementById('expand-btn');
+  if (input.classList.contains('expanded')) {
+    input.classList.remove('expanded');
+    input.style.height = '80px';
+    input.style.overflowY = 'hidden';
+    btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>';
+    btn.title = '展开';
+  } else {
+    input.classList.add('expanded');
+    input.style.height = input.scrollHeight + 'px';
+    input.style.overflowY = 'auto'; // allow inner scroll if huge
+    btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z"/></svg>';
+    btn.title = '收起';
+  }
+}
+
+document.getElementById('clip-input').addEventListener('input', function() {
+  const btn = document.getElementById('expand-btn');
+  if (this.classList.contains('expanded')) {
+    this.style.height = '80px'; // Temporarily shrink to get real scrollHeight
+    const sh = this.scrollHeight;
+    this.style.height = sh + 'px';
+    if (sh <= 80) {
+      this.classList.remove('expanded');
+      this.style.height = '80px';
+      this.style.overflowY = 'hidden';
+      btn.classList.add('hidden');
+      btn.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>';
+      btn.title = '展开';
+    }
+  } else {
+    if (this.scrollHeight > 80) {
+      btn.classList.remove('hidden');
+    } else {
+      btn.classList.add('hidden');
+    }
+  }
+});
 
 function showMain() {
   document.getElementById('auth-section').classList.add('hidden');
@@ -1429,6 +1483,7 @@ async function pushClip() {
       body: JSON.stringify({ content, device_name: currentDeviceName })
     });
     input.value = '';
+    input.dispatchEvent(new Event('input')); // Reset auto-expand state
     showToast('已推送到所有设备');
     loadHistory();
   } catch (e) {

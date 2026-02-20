@@ -25,7 +25,7 @@ type ConfigResult struct {
 func ShowConfigGUI(prefill *AppConfig) *ConfigResult {
 	a := app.New()
 	w := a.NewWindow("ClipSync - 配置")
-	w.Resize(fyne.NewSize(420, 340))
+	w.Resize(fyne.NewSize(420, 380))
 	w.CenterOnScreen()
 	w.SetFixedSize(true)
 
@@ -105,7 +105,7 @@ func ShowConfigGUI(prefill *AppConfig) *ConfigResult {
 		passwordEntry,
 		layout.NewSpacer(),
 		connectBtn,
-		statusLabel,
+		container.NewGridWrap(fyne.NewSize(380, 60), container.NewScroll(statusLabel)),
 	)
 
 	w.SetContent(container.NewPadded(form))
