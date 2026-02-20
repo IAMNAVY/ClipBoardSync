@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,28 +13,34 @@ import (
 
 // WSClient manages a persistent WebSocket connection with auto-reconnect.
 type WSClient struct {
-	serverURL string
-	token     string
+	serverURL  string
+	token      string
+	deviceName string
 
 	conn *websocket.Conn
 	mu   sync.Mutex
 
-	onClip   func(content string) // called when a remote clip is received
-	onStatus func(connected bool) // called on connection status change
+	clientID uint64 // assigned by server via welcome message
+
+	onClip          func(content string) // called when a remote clip is received
+	onStatus        func(connected bool) // called on connection status change
+	onDeviceRenamed func(newName string) // called when server renames this device
 
 	stopCh chan struct{}
 	done   chan struct{}
 }
 
 // NewWSClient creates a new WebSocket client.
-func NewWSClient(serverURL, token string, onClip func(string), onStatus func(bool)) *WSClient {
+func NewWSClient(serverURL, token, deviceName string, onClip func(string), onStatus func(bool), onDeviceRenamed func(string)) *WSClient {
 	return &WSClient{
-		serverURL: serverURL,
-		token:     token,
-		onClip:    onClip,
-		onStatus:  onStatus,
-		stopCh:    make(chan struct{}),
-		done:      make(chan struct{}),
+		serverURL:       serverURL,
+		token:           token,
+		deviceName:      deviceName,
+		onClip:          onClip,
+		onStatus:        onStatus,
+		onDeviceRenamed: onDeviceRenamed,
+		stopCh:          make(chan struct{}),
+		done:            make(chan struct{}),
 	}
 }
 
@@ -62,11 +67,12 @@ func (w *WSClient) UpdateToken(token string) {
 	w.mu.Unlock()
 }
 
-// buildWSURL converts http(s)://host to ws(s)://host/ws?token=xxx
+// buildWSURL converts http(s)://host to ws(s)://host/ws?token=xxx&device_name=yyy
 func (w *WSClient) buildWSURL() string {
 	w.mu.Lock()
 	serverURL := w.serverURL
 	token := w.token
+	devName := w.deviceName
 	w.mu.Unlock()
 
 	wsURL := strings.Replace(serverURL, "https://", "wss://", 1)
@@ -76,11 +82,7 @@ func (w *WSClient) buildWSURL() string {
 	u, _ := url.Parse(wsURL + "/ws")
 	q := u.Query()
 	q.Set("token", token)
-	hostname, err := os.Hostname()
-	if err != nil || hostname == "" {
-		hostname = "Desktop Client"
-	}
-	q.Set("device_name", hostname)
+	q.Set("device_name", devName)
 	u.RawQuery = q.Encode()
 	return u.String()
 }
@@ -136,6 +138,7 @@ func (w *WSClient) connectAndListen() error {
 
 	w.mu.Lock()
 	w.conn = conn
+	w.clientID = 0 // reset until we receive welcome
 	w.mu.Unlock()
 
 	log.Println("[ws] 已连接")
@@ -189,13 +192,67 @@ func (w *WSClient) connectAndListen() error {
 			continue
 		}
 
-		if msgType, ok := msg["type"].(string); ok && msgType == "clip" {
+		msgType, _ := msg["type"].(string)
+
+		switch msgType {
+		case "clip":
 			if content, ok := msg["content"].(string); ok && content != "" {
 				log.Printf("[ws] 收到远程剪贴板内容 (%d 字符)", len(content))
 				if w.onClip != nil {
 					w.onClip(content)
 				}
 			}
+
+		case "welcome":
+			// Server tells us our client ID
+			if idFloat, ok := msg["client_id"].(float64); ok {
+				w.mu.Lock()
+				w.clientID = uint64(idFloat)
+				w.mu.Unlock()
+				log.Printf("[ws] 收到 welcome, client_id=%d", uint64(idFloat))
+			}
+
+		case "devices_update":
+			// Check if server renamed this device
+			w.handleDevicesUpdate(msg)
+		}
+	}
+}
+
+// handleDevicesUpdate checks if the server has renamed this client's device.
+func (w *WSClient) handleDevicesUpdate(msg map[string]interface{}) {
+	w.mu.Lock()
+	myID := w.clientID
+	myName := w.deviceName
+	w.mu.Unlock()
+
+	if myID == 0 {
+		return // haven't received welcome yet
+	}
+
+	devices, ok := msg["devices"].([]interface{})
+	if !ok {
+		return
+	}
+
+	for _, d := range devices {
+		dev, ok := d.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		idFloat, _ := dev["id"].(float64)
+		if uint64(idFloat) == myID {
+			serverName, _ := dev["device_name"].(string)
+			if serverName != "" && serverName != myName {
+				log.Printf("[ws] 服务端重命名设备: '%s' -> '%s'", myName, serverName)
+				w.mu.Lock()
+				w.deviceName = serverName
+				w.mu.Unlock()
+				if w.onDeviceRenamed != nil {
+					w.onDeviceRenamed(serverName)
+				}
+			}
+			break
 		}
 	}
 }

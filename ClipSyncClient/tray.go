@@ -9,17 +9,20 @@ import (
 
 // trayCallbacks holds the callbacks for tray menu actions.
 type trayCallbacks struct {
-	onReconfigure func()
-	onQuit        func()
+	onReconfigure  func()
+	onRenameDevice func()
+	onQuit         func()
 }
 
 var (
-	trayStatusItem    *systray.MenuItem
-	trayAutoStartItem *systray.MenuItem
-	trayCbs           *trayCallbacks
-	trayReady         bool
-	cachedConnected   bool
-	trayMu            sync.Mutex
+	trayStatusItem     *systray.MenuItem
+	trayDeviceNameItem *systray.MenuItem
+	trayAutoStartItem  *systray.MenuItem
+	trayCbs            *trayCallbacks
+	trayReady          bool
+	cachedConnected    bool
+	cachedDeviceName   string
+	trayMu             sync.Mutex
 )
 
 // StartTray initializes the system tray. This blocks the calling goroutine.
@@ -49,6 +52,20 @@ func applyTrayStatus(connected bool) {
 	}
 }
 
+// UpdateTrayDeviceName updates the device name display in the tray menu.
+func UpdateTrayDeviceName(name string) {
+	trayMu.Lock()
+	cachedDeviceName = name
+	ready := trayReady
+	trayMu.Unlock()
+
+	if !ready || trayDeviceNameItem == nil {
+		return
+	}
+	trayDeviceNameItem.SetTitle("📱 " + name)
+	systray.SetTooltip("ClipSync - " + name)
+}
+
 func onTrayReady() {
 	systray.SetIcon(iconBytes)
 	systray.SetTitle("ClipSync")
@@ -58,14 +75,26 @@ func onTrayReady() {
 	trayStatusItem = systray.AddMenuItem("○ 未连接 (Disconnected)", "WebSocket 连接状态")
 	trayStatusItem.Disable()
 
+	// Device name (disabled — just for display)
+	trayDeviceNameItem = systray.AddMenuItem("📱 设备", "当前设备名称")
+	trayDeviceNameItem.Disable()
+
 	// Mark tray as ready and apply any cached status
 	trayMu.Lock()
 	trayReady = true
 	status := cachedConnected
+	devName := cachedDeviceName
 	trayMu.Unlock()
 	applyTrayStatus(status)
+	if devName != "" {
+		trayDeviceNameItem.SetTitle("📱 " + devName)
+		systray.SetTooltip("ClipSync - " + devName)
+	}
 
 	systray.AddSeparator()
+
+	// Rename device
+	mRenameDevice := systray.AddMenuItem("重命名设备 (Rename)", "修改设备名称")
 
 	// Auto-start toggle
 	trayAutoStartItem = systray.AddMenuItemCheckbox(
@@ -97,6 +126,10 @@ func onTrayReady() {
 					if err := EnableAutoStart(); err != nil {
 						log.Printf("[tray] 启用开机启动失败: %v", err)
 					}
+				}
+			case <-mRenameDevice.ClickedCh:
+				if trayCbs != nil && trayCbs.onRenameDevice != nil {
+					trayCbs.onRenameDevice()
 				}
 			case <-mReconfigure.ClickedCh:
 				if trayCbs != nil && trayCbs.onReconfigure != nil {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"log"
 	"os"
 	"os/exec"
@@ -36,6 +37,19 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle out-of-process rename GUI
+	if len(os.Args) > 1 && os.Args[1] == "--rename-ui" {
+		currentName := "Desktop Client"
+		if len(os.Args) > 2 {
+			currentName = os.Args[2]
+		}
+		newName := ShowRenameGUI(currentName)
+		// Output result as JSON to stdout
+		result := map[string]string{"new_name": newName}
+		json.NewEncoder(os.Stdout).Encode(result)
+		os.Exit(0)
+	}
+
 	log.Println("========================================")
 	log.Println("ClipSyncClient 启动")
 	log.Println("========================================")
@@ -63,9 +77,13 @@ func main() {
 	startSyncServices()
 
 	// Start system tray (this blocks)
+	devName := GetDeviceName(appConfig)
+	UpdateTrayDeviceName(devName)
+
 	StartTray(&trayCallbacks{
-		onReconfigure: handleReconfigure,
-		onQuit:        handleQuit,
+		onReconfigure:  handleReconfigure,
+		onRenameDevice: handleRenameDevice,
+		onQuit:         handleQuit,
 	})
 }
 
@@ -96,6 +114,7 @@ func startSyncServices() {
 	configLock.Lock()
 	serverURL := appConfig.ServerURL
 	token := appConfig.Token
+	devName := GetDeviceName(appConfig)
 	configLock.Unlock()
 
 	// Create clipboard monitor
@@ -114,7 +133,7 @@ func startSyncServices() {
 	clipMon.Start()
 
 	// Create WebSocket client
-	wsClient = NewWSClient(serverURL, token,
+	wsClient = NewWSClient(serverURL, token, devName,
 		// onClip: write remote content to local clipboard
 		func(content string) {
 			clipMon.WriteClipboard(content)
@@ -122,6 +141,18 @@ func startSyncServices() {
 		// onStatus: update tray icon
 		func(connected bool) {
 			UpdateTrayStatus(connected)
+		},
+		// onDeviceRenamed: server remotely renamed this device
+		func(newName string) {
+			log.Printf("[main] 设备被远程重命名为: %s", newName)
+			configLock.Lock()
+			appConfig.DeviceName = newName
+			configLock.Unlock()
+
+			if err := SaveConfig(appConfig); err != nil {
+				log.Printf("[main] 保存设备名失败: %v", err)
+			}
+			UpdateTrayDeviceName(newName)
 		},
 	)
 	wsClient.Start()
@@ -137,6 +168,49 @@ func stopSyncServices() {
 		wsClient.Stop()
 		wsClient = nil
 	}
+}
+
+// handleRenameDevice spawns a child process for the rename GUI and applies the result.
+func handleRenameDevice() {
+	configLock.Lock()
+	currentName := GetDeviceName(appConfig)
+	configLock.Unlock()
+
+	log.Println("[main] 正在启动重命名界面(独立进程)...")
+	cmd := exec.Command(os.Args[0], "--rename-ui", currentName)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[main] 重命名界面异常退出: %v", err)
+		return
+	}
+
+	var result map[string]string
+	if err := json.Unmarshal(output, &result); err != nil {
+		log.Printf("[main] 解析重命名结果失败: %v", err)
+		return
+	}
+
+	newName := result["new_name"]
+	if newName == "" || newName == currentName {
+		log.Println("[main] 设备名未更改")
+		return
+	}
+
+	log.Printf("[main] 设备重命名: '%s' -> '%s'", currentName, newName)
+
+	configLock.Lock()
+	appConfig.DeviceName = newName
+	configLock.Unlock()
+
+	if err := SaveConfig(appConfig); err != nil {
+		log.Printf("[main] 保存设备名失败: %v", err)
+	}
+
+	UpdateTrayDeviceName(newName)
+
+	// Restart WS to apply new device name
+	stopSyncServices()
+	startSyncServices()
 }
 
 // handleReconfigure stops sync, shows the GUI, and restarts sync.

@@ -113,3 +113,40 @@ func ShowConfigGUI(prefill *AppConfig) *ConfigResult {
 
 	return result
 }
+
+// ShowRenameGUI displays a simple Fyne window for device renaming.
+// Returns the new name, or "" if cancelled.
+func ShowRenameGUI(currentName string) string {
+	a := app.New()
+	w := a.NewWindow("ClipSync - 重命名设备")
+	w.Resize(fyne.NewSize(380, 200))
+	w.CenterOnScreen()
+	w.SetFixedSize(true)
+
+	nameEntry := widget.NewEntry()
+	nameEntry.SetText(currentName)
+
+	var newName string
+
+	saveBtn := widget.NewButton("保存 (Save)", func() {
+		val := strings.TrimSpace(nameEntry.Text)
+		if val != "" {
+			newName = val
+		}
+		w.Close()
+	})
+
+	form := container.NewVBox(
+		widget.NewLabelWithStyle("重命名设备", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		widget.NewSeparator(),
+		widget.NewLabel("设备名称 (Device Name):"),
+		nameEntry,
+		layout.NewSpacer(),
+		saveBtn,
+	)
+
+	w.SetContent(container.NewPadded(form))
+	w.ShowAndRun()
+
+	return newName
+}

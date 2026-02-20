@@ -544,6 +544,9 @@ func handleWebSocket(c *gin.Context) {
 	log.Printf("[ws] user %d device '%s' connected (total: %d)", userID, deviceName, countUserClients(userID))
 	hub.broadcastDeviceList(userID)
 
+	// Send welcome message with client ID so the client can identify itself
+	client.writeJSON(gin.H{"type": "welcome", "client_id": client.id})
+
 	defer func() {
 		hub.unregister(client)
 		conn.Close()

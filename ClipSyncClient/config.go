@@ -10,10 +10,23 @@ import (
 
 // AppConfig holds user-persistent configuration.
 type AppConfig struct {
-	ServerURL string `json:"server_url"`
-	Username  string `json:"username"`
-	Token     string `json:"token"`
-	AutoStart bool   `json:"auto_start"`
+	ServerURL  string `json:"server_url"`
+	Username   string `json:"username"`
+	Token      string `json:"token"`
+	AutoStart  bool   `json:"auto_start"`
+	DeviceName string `json:"device_name"`
+}
+
+// GetDeviceName returns the configured device name, falling back to hostname.
+func GetDeviceName(cfg *AppConfig) string {
+	if cfg != nil && cfg.DeviceName != "" {
+		return cfg.DeviceName
+	}
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return "Desktop Client"
+	}
+	return hostname
 }
 
 // configDir returns %APPDATA%\ClipSyncClient, creating it if necessary.
