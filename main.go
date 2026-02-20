@@ -5,8 +5,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -47,10 +49,11 @@ type User struct {
 }
 
 type ClipEntry struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	UserID    uint      `gorm:"index;not null" json:"user_id"`
-	Content   string    `gorm:"type:text;not null" json:"content"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         uint      `gorm:"primaryKey" json:"id"`
+	UserID     uint      `gorm:"index;not null" json:"user_id"`
+	Content    string    `gorm:"type:text;not null" json:"content"`
+	DeviceName string    `gorm:"size:128;default:''" json:"device_name"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 // ============================================================================
@@ -143,7 +146,10 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
+var clientIDCounter uint64
+
 type Client struct {
+	id          uint64
 	conn        *websocket.Conn
 	userID      uint
 	deviceName  string
@@ -218,6 +224,7 @@ func (h *Hub) broadcastDeviceList(userID uint) {
 	devices := make([]gin.H, 0, len(*list))
 	for _, c := range *list {
 		devices = append(devices, gin.H{
+			"id":           c.id,
 			"device_name":  c.deviceName,
 			"connected_at": c.connectedAt,
 		})
@@ -231,6 +238,21 @@ func (h *Hub) broadcastDeviceList(userID uint) {
 			log.Printf("[ws] write error for user %d: %v", userID, err)
 		}
 	}
+}
+
+// findClient finds a client by its unique ID for a given user
+func (h *Hub) findClient(userID uint, clientID uint64) *Client {
+	val, ok := h.clients.Load(userID)
+	if !ok {
+		return nil
+	}
+	list := val.(*[]*Client)
+	for _, c := range *list {
+		if c.id == clientID {
+			return c
+		}
+	}
+	return nil
 }
 
 // ============================================================================
@@ -367,8 +389,9 @@ func handlePushClip(c *gin.Context) {
 	}
 
 	entry := ClipEntry{
-		UserID:  userID,
-		Content: req.Content,
+		UserID:     userID,
+		Content:    req.Content,
+		DeviceName: "Web \u6d4f\u89c8\u5668",
 	}
 	if err := db.Create(&entry).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save clipboard"})
@@ -380,10 +403,11 @@ func handlePushClip(c *gin.Context) {
 
 	// Broadcast to all connected devices of this user
 	hub.broadcast(userID, gin.H{
-		"type":       "clip",
-		"content":    entry.Content,
-		"id":         entry.ID,
-		"created_at": entry.CreatedAt,
+		"type":        "clip",
+		"content":     entry.Content,
+		"id":          entry.ID,
+		"device_name": entry.DeviceName,
+		"created_at":  entry.CreatedAt,
 	}, nil)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -431,11 +455,60 @@ func handleGetDevices(c *gin.Context) {
 	devices := make([]gin.H, 0, len(*list))
 	for _, cl := range *list {
 		devices = append(devices, gin.H{
+			"id":           cl.id,
 			"device_name":  cl.deviceName,
 			"connected_at": cl.connectedAt,
 		})
 	}
 	c.JSON(http.StatusOK, gin.H{"devices": devices, "count": len(devices)})
+}
+
+func handleRenameDevice(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	clientID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device id"})
+		return
+	}
+
+	var req struct {
+		DeviceName string `json:"device_name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	client := hub.findClient(userID, clientID)
+	if client == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
+
+	client.deviceName = req.DeviceName
+	log.Printf("[ws] user %d renamed device %d to '%s'", userID, clientID, req.DeviceName)
+	hub.broadcastDeviceList(userID)
+	c.JSON(http.StatusOK, gin.H{"message": "device renamed"})
+}
+
+func handleRemoveDevice(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	clientID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid device id"})
+		return
+	}
+
+	client := hub.findClient(userID, clientID)
+	if client == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "device not found"})
+		return
+	}
+
+	// Close the connection — the defer in handleWebSocket will unregister and broadcast
+	client.conn.Close()
+	log.Printf("[ws] user %d removed device %d '%s'", userID, clientID, client.deviceName)
+	c.JSON(http.StatusOK, gin.H{"message": "device removed"})
 }
 
 // ============================================================================
@@ -466,7 +539,7 @@ func handleWebSocket(c *gin.Context) {
 		return
 	}
 
-	client := &Client{conn: conn, userID: userID, deviceName: deviceName, connectedAt: time.Now()}
+	client := &Client{id: atomic.AddUint64(&clientIDCounter, 1), conn: conn, userID: userID, deviceName: deviceName, connectedAt: time.Now()}
 	hub.register(client)
 	log.Printf("[ws] user %d device '%s' connected (total: %d)", userID, deviceName, countUserClients(userID))
 	hub.broadcastDeviceList(userID)
@@ -518,8 +591,9 @@ func handleWebSocket(c *gin.Context) {
 			}
 
 			entry := ClipEntry{
-				UserID:  userID,
-				Content: content,
+				UserID:     userID,
+				Content:    content,
+				DeviceName: client.deviceName,
 			}
 			if err := db.Create(&entry).Error; err != nil {
 				log.Printf("[ws] db error for user %d: %v", userID, err)
@@ -529,10 +603,11 @@ func handleWebSocket(c *gin.Context) {
 
 			// Broadcast to OTHER devices of this user
 			hub.broadcast(userID, gin.H{
-				"type":       "clip",
-				"content":    entry.Content,
-				"id":         entry.ID,
-				"created_at": entry.CreatedAt,
+				"type":        "clip",
+				"content":     entry.Content,
+				"id":          entry.ID,
+				"device_name": entry.DeviceName,
+				"created_at":  entry.CreatedAt,
 			}, client)
 		}
 	}
@@ -1111,6 +1186,8 @@ function showMain() {
 
 function copyIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>'; }
 function trashIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>'; }
+function editIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>'; }
+function closeIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>'; }
 
 async function loadHistory() {
   try {
@@ -1141,7 +1218,8 @@ function renderClips(entries) {
     // Header
     const meta = document.createElement('div');
     meta.className = 'clip-meta';
-    meta.innerHTML = '<span>' + dateStr + ' ' + timeStr + '</span>';
+    const source = e.device_name ? ' · 来自 ' + escapeHtml(e.device_name) : '';
+    meta.innerHTML = '<span>' + dateStr + ' ' + timeStr + source + '</span>';
     
     // Actions
     const actions = document.createElement('div');
@@ -1257,9 +1335,37 @@ function renderDevices(devices) {
     div.innerHTML = '<div class="device-icon">' + iconSvg + '</div>'
       + '<div class="device-info"><div class="device-name">' + escapeHtml(d.device_name) + '</div>'
       + '<div class="device-time">连接于 ' + dateStr + ' ' + timeStr + '</div></div>'
+      + '<div style="display:flex;gap:4px;align-items:center;">'
+      + '<button class="btn-icon" title="重命名" onclick="renameDevice(' + d.id + ',\'' + escapeHtml(d.device_name).replace(/'/g, "\\'") + '\')">' + editIcon() + '</button>'
+      + '<button class="btn-icon danger" title="移除" onclick="removeDevice(' + d.id + ')">' + closeIcon() + '</button>'
+      + '</div>'
       + '<div class="device-status"></div>';
     list.appendChild(div);
   });
+}
+
+async function renameDevice(id, currentName) {
+  const newName = prompt('请输入新的设备名称:', currentName);
+  if (!newName || newName === currentName) return;
+  try {
+    await apiFetch('/api/devices/' + id + '/rename', {
+      method: 'PUT',
+      body: JSON.stringify({ device_name: newName })
+    });
+    showToast('设备已重命名');
+  } catch (e) {
+    showToast('重命名失败: ' + e.message, 'error');
+  }
+}
+
+async function removeDevice(id) {
+  if (!confirm('确定要移除该设备吗？该设备的 WebSocket 连接将被断开。')) return;
+  try {
+    await apiFetch('/api/devices/' + id, { method: 'DELETE' });
+    showToast('设备已移除');
+  } catch (e) {
+    showToast('移除失败: ' + e.message, 'error');
+  }
 }
 
 function escapeHtml(str) {
@@ -1346,6 +1452,8 @@ func main() {
 		api.GET("/clipboard", handleGetHistory)
 		api.DELETE("/clipboard/:id", handleDeleteClip)
 		api.GET("/devices", handleGetDevices)
+		api.PUT("/devices/:id/rename", handleRenameDevice)
+		api.DELETE("/devices/:id", handleRemoveDevice)
 	}
 
 	log.Printf("🚀 ClipSync server starting on %s", listenAddr)
