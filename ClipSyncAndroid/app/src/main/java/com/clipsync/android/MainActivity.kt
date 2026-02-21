@@ -69,8 +69,8 @@ class MainActivity : ComponentActivity() {
                     )
                 } else {
                     LoginScreen(
-                        onLoginSuccess = { serverUrl, username, token ->
-                            handleLoginSuccess(serverUrl, username, token)
+                        onLoginSuccess = { serverUrl, username, password, token ->
+                            handleLoginSuccess(serverUrl, username, password, token)
                         }
                     )
                 }
@@ -118,12 +118,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleLoginSuccess(serverUrl: String, username: String, token: String) {
+    private fun handleLoginSuccess(serverUrl: String, username: String, password: String, token: String) {
         CoroutineScope(Dispatchers.IO).launch {
             prefs.saveConfig(
                 AppConfig(
                     serverUrl = serverUrl,
                     username = username,
+                    password = password,
                     token = token,
                     deviceName = Build.MODEL
                 )

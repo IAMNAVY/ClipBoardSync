@@ -25,7 +25,8 @@ class WsClient(
     private val onStatusChange: (Boolean) -> Unit,
     private val onDeviceRenamed: (String) -> Unit,
     private val onForceDisconnect: (String) -> Unit,
-    private val onErrorMessage: ((String) -> Unit)? = null
+    private val onErrorMessage: ((String) -> Unit)? = null,
+    private val onTokenExpired: (() -> Unit)? = null
 ) {
     companion object {
         private const val TAG = "WsClient"
@@ -54,6 +55,10 @@ class WsClient(
         reconnectThread?.interrupt()
         webSocket?.close(1000, "client stopping")
         webSocket = null
+    }
+
+    fun updateToken(newToken: String) {
+        token = newToken
     }
 
     fun updateDeviceName(newName: String) {
@@ -127,6 +132,11 @@ class WsClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 val errorMsg = t.message ?: "Unknown failure"
                 Log.e(TAG, "Failure: $errorMsg")
+                // Check for 401 Unauthorized — token likely expired
+                if (response != null && response.code == 401) {
+                    Log.w(TAG, "Server returned 401, token may be expired")
+                    onTokenExpired?.invoke()
+                }
                 onErrorMessage?.invoke("WebSocket 失败: $errorMsg")
                 latch.countDown()
             }

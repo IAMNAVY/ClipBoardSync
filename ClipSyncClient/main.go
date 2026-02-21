@@ -29,6 +29,7 @@ func main() {
 		if result != nil {
 			cfg.ServerURL = result.ServerURL
 			cfg.Username = result.Username
+			cfg.Password = result.Password
 			cfg.Token = result.Token
 			if err := SaveConfig(cfg); err != nil {
 				log.Printf("[config-ui] 保存配置失败: %v", err)
@@ -181,6 +182,7 @@ func startSyncServices() {
 			configLock.Lock()
 			appConfig.Token = ""
 			appConfig.Username = ""
+			appConfig.Password = ""
 			configLock.Unlock()
 			SaveConfig(appConfig)
 
@@ -193,6 +195,10 @@ func startSyncServices() {
 
 			// Launch configure window
 			go handleReconfigure()
+		},
+		// onTokenExpired: auto re-login to renew token
+		func() {
+			handleTokenRenewal()
 		},
 	)
 	wsClient.Start()
@@ -275,6 +281,42 @@ func handleReconnect() {
 		wsClient.Reconnect()
 	} else {
 		log.Println("[main] WebSocket 客户端未初始化，无法重连")
+	}
+}
+
+// handleTokenRenewal attempts to re-login with saved credentials to get a fresh token.
+func handleTokenRenewal() {
+	configLock.Lock()
+	serverURL := appConfig.ServerURL
+	username := appConfig.Username
+	password := appConfig.Password
+	configLock.Unlock()
+
+	if username == "" || password == "" || serverURL == "" {
+		log.Println("[main] 无法续签 Token: 缺少已保存的凭据，需要重新配置")
+		go handleReconfigure()
+		return
+	}
+
+	log.Println("[main] Token 过期，正在尝试自动续签...")
+	newToken, err := Login(serverURL, username, password)
+	if err != nil {
+		log.Printf("[main] 自动续签失败: %v", err)
+		return
+	}
+
+	log.Println("[main] Token 续签成功")
+	configLock.Lock()
+	appConfig.Token = newToken
+	configLock.Unlock()
+
+	if err := SaveConfig(appConfig); err != nil {
+		log.Printf("[main] 保存续签 Token 失败: %v", err)
+	}
+
+	// Update the WS client's token so the next reconnect uses the new one
+	if wsClient != nil {
+		wsClient.UpdateToken(newToken)
 	}
 }
 

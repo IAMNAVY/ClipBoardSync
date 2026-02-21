@@ -39,18 +39,28 @@ func (c *Client) writeJSON(v interface{}) error {
 	return c.conn.WriteJSON(v)
 }
 
-// Hub stores all active connections keyed by user ID
+// Hub stores all active connections keyed by user ID.
+// Uses sync.Map for user-level concurrency and sync.RWMutex per user for
+// safe access to the client list slice.
 type Hub struct {
-	// map[uint][]*Client
+	// map[uint]*userClients
 	clients sync.Map
+}
+
+// userClients holds the client list for one user, protected by a mutex.
+type userClients struct {
+	mu   sync.RWMutex
+	list []*Client
 }
 
 var hub = &Hub{}
 
 func (h *Hub) register(client *Client) {
-	val, _ := h.clients.LoadOrStore(client.userID, &[]*Client{})
-	list := val.(*[]*Client)
-	*list = append(*list, client)
+	val, _ := h.clients.LoadOrStore(client.userID, &userClients{})
+	uc := val.(*userClients)
+	uc.mu.Lock()
+	uc.list = append(uc.list, client)
+	uc.mu.Unlock()
 }
 
 func (h *Hub) unregister(client *Client) {
@@ -58,18 +68,21 @@ func (h *Hub) unregister(client *Client) {
 	if !ok {
 		return
 	}
-	list := val.(*[]*Client)
-	newList := make([]*Client, 0, len(*list))
-	for _, c := range *list {
+	uc := val.(*userClients)
+	uc.mu.Lock()
+	newList := make([]*Client, 0, len(uc.list))
+	for _, c := range uc.list {
 		if c != client {
 			newList = append(newList, c)
 		}
 	}
 	if len(newList) == 0 {
+		uc.mu.Unlock()
 		h.clients.Delete(client.userID)
-	} else {
-		*list = newList
+		return
 	}
+	uc.list = newList
+	uc.mu.Unlock()
 }
 
 // broadcast sends to all connections of a user EXCEPT the sender (if provided)
@@ -78,8 +91,13 @@ func (h *Hub) broadcast(userID uint, msg interface{}, sender *Client) {
 	if !ok {
 		return
 	}
-	list := val.(*[]*Client)
-	for _, c := range *list {
+	uc := val.(*userClients)
+	uc.mu.RLock()
+	snapshot := make([]*Client, len(uc.list))
+	copy(snapshot, uc.list)
+	uc.mu.RUnlock()
+
+	for _, c := range snapshot {
 		if c == sender {
 			continue
 		}
@@ -95,9 +113,14 @@ func (h *Hub) broadcastDeviceList(userID uint) {
 	if !ok {
 		return
 	}
-	list := val.(*[]*Client)
-	devices := make([]gin.H, 0, len(*list))
-	for _, c := range *list {
+	uc := val.(*userClients)
+	uc.mu.RLock()
+	snapshot := make([]*Client, len(uc.list))
+	copy(snapshot, uc.list)
+	uc.mu.RUnlock()
+
+	devices := make([]gin.H, 0, len(snapshot))
+	for _, c := range snapshot {
 		devices = append(devices, gin.H{
 			"id":           c.id,
 			"device_name":  c.deviceName,
@@ -108,7 +131,7 @@ func (h *Hub) broadcastDeviceList(userID uint) {
 		"type":    "devices_update",
 		"devices": devices,
 	}
-	for _, c := range *list {
+	for _, c := range snapshot {
 		if err := c.writeJSON(msg); err != nil {
 			log.Printf("[ws] write error for user %d: %v", userID, err)
 		}
@@ -121,8 +144,10 @@ func (h *Hub) findClient(userID uint, clientID uint64) *Client {
 	if !ok {
 		return nil
 	}
-	list := val.(*[]*Client)
-	for _, c := range *list {
+	uc := val.(*userClients)
+	uc.mu.RLock()
+	defer uc.mu.RUnlock()
+	for _, c := range uc.list {
 		if c.id == clientID {
 			return c
 		}
@@ -166,31 +191,40 @@ func handleWebSocket(c *gin.Context) {
 	// Send welcome message with client ID so the client can identify itself
 	client.writeJSON(gin.H{"type": "welcome", "client_id": client.id})
 
+	// Done channel to stop the ping ticker goroutine when connection closes
+	done := make(chan struct{})
+
 	defer func() {
+		close(done) // stop ping ticker
 		hub.unregister(client)
 		conn.Close()
 		log.Printf("[ws] user %d device '%s' disconnected (total: %d)", userID, deviceName, countUserClients(userID))
 		hub.broadcastDeviceList(userID)
 	}()
 
-	// Configure ping/pong
+	// Configure ping/pong — 20s ping, 60s deadline (3:1 ratio for reliability)
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
-	// Start ping ticker
+	// Start ping ticker with proper shutdown via done channel
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
-		for range ticker.C {
-			client.mu.Lock()
-			conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			err := conn.WriteMessage(websocket.PingMessage, nil)
-			client.mu.Unlock()
-			if err != nil {
+		for {
+			select {
+			case <-done:
 				return
+			case <-ticker.C:
+				client.mu.Lock()
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				err := conn.WriteMessage(websocket.PingMessage, nil)
+				client.mu.Unlock()
+				if err != nil {
+					return
+				}
 			}
 		}
 	}()
@@ -240,5 +274,8 @@ func countUserClients(userID uint) int {
 	if !ok {
 		return 0
 	}
-	return len(*val.(*[]*Client))
+	uc := val.(*userClients)
+	uc.mu.RLock()
+	defer uc.mu.RUnlock()
+	return len(uc.list)
 }

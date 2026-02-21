@@ -20,6 +20,7 @@ const (
 type AppConfig struct {
 	ServerURL  string `json:"server_url"`
 	Username   string `json:"username"`
+	Password   string `json:"password"` // saved for automatic token renewal
 	Token      string `json:"token"`
 	AutoStart  bool   `json:"auto_start"`
 	DeviceName string `json:"device_name"`

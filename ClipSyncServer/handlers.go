@@ -165,15 +165,17 @@ func handleGetDevices(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"devices": []gin.H{}, "count": 0})
 		return
 	}
-	list := val.(*[]*Client)
-	devices := make([]gin.H, 0, len(*list))
-	for _, cl := range *list {
+	uc := val.(*userClients)
+	uc.mu.RLock()
+	devices := make([]gin.H, 0, len(uc.list))
+	for _, cl := range uc.list {
 		devices = append(devices, gin.H{
 			"id":           cl.id,
 			"device_name":  cl.deviceName,
 			"connected_at": cl.connectedAt,
 		})
 	}
+	uc.mu.RUnlock()
 	c.JSON(http.StatusOK, gin.H{"devices": devices, "count": len(devices)})
 }
 

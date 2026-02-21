@@ -87,6 +87,8 @@ The APK is output to `app/build/outputs/apk/debug/app-debug.apk`.
    - **Username** and **Password**
 2. Tap **Login**. On success, the main screen appears.
 
+> [Default] Username: admin Password: admin123, Before performing any operation, you should log in to the administrator account and change the password.
+
 ### Permissions Setup
 
 After login, the app guides you to enable:

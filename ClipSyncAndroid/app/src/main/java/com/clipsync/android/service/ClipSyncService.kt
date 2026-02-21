@@ -273,6 +273,9 @@ class ClipSyncService : Service() {
             onErrorMessage = { error ->
                 lastErrorMessage = error
                 onErrorMessageChanged?.invoke(error)
+            },
+            onTokenExpired = {
+                handleTokenRenewal()
             }
         )
         wsClient?.start()
@@ -320,6 +323,46 @@ class ClipSyncService : Service() {
                 startWebSocket(config)
             }
         }
+    }
+
+    /**
+     * Attempts to re-login with saved credentials to get a fresh token.
+     */
+    private fun handleTokenRenewal() {
+        scope.launch {
+            val config = prefs.configFlow.first()
+            val serverUrl = config.serverUrl
+            val username = config.username
+            val password = config.password
+
+            if (username.isBlank() || password.isBlank() || serverUrl.isBlank()) {
+                Log.w(TAG, "Cannot renew token: missing saved credentials")
+                return@launch
+            }
+
+            Log.d(TAG, "Token expired, attempting auto-renewal...")
+            val result = ApiClient.login(serverUrl, username, password)
+            result.fold(
+                onSuccess = { resp ->
+                    Log.d(TAG, "Token renewed successfully")
+                    // Save new token
+                    prefs.saveConfig(config.copy(token = resp.token))
+                    currentConfig = config.copy(token = resp.token)
+                    // Update WsClient token
+                    wsClient?.updateToken(resp.token)
+                },
+                onFailure = { e ->
+                    Log.e(TAG, "Token renewal failed: ${e.message}")
+                }
+            )
+        }
+    }
+
+    /**
+     * Updates the token in the running WsClient (used after external renewal).
+     */
+    fun updateToken(newToken: String) {
+        wsClient?.updateToken(newToken)
     }
 
     private fun createNotificationChannel() {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"log"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ type WSClient struct {
 	onStatus          func(connected bool) // called on connection status change
 	onDeviceRenamed   func(newName string) // called when server renames this device
 	onForceDisconnect func(reason string)  // called on server force disconnect
+	onTokenExpired    func()               // called when token appears expired (401 on connect)
 
 	forceDisconnected bool // set when server sends force_disconnect
 
@@ -36,7 +38,7 @@ type WSClient struct {
 }
 
 // NewWSClient creates a new WebSocket client.
-func NewWSClient(serverURL, token, deviceName string, onClip func(string), onStatus func(bool), onDeviceRenamed func(string), onForceDisconnect func(string)) *WSClient {
+func NewWSClient(serverURL, token, deviceName string, onClip func(string), onStatus func(bool), onDeviceRenamed func(string), onForceDisconnect func(string), onTokenExpired func()) *WSClient {
 	return &WSClient{
 		serverURL:         serverURL,
 		token:             token,
@@ -45,6 +47,7 @@ func NewWSClient(serverURL, token, deviceName string, onClip func(string), onSta
 		onStatus:          onStatus,
 		onDeviceRenamed:   onDeviceRenamed,
 		onForceDisconnect: onForceDisconnect,
+		onTokenExpired:    onTokenExpired,
 		stopCh:            make(chan struct{}),
 		done:              make(chan struct{}),
 		reconnectCh:       make(chan struct{}, 1),
@@ -196,8 +199,15 @@ func (w *WSClient) connectAndListen() (bool, error) {
 		HandshakeTimeout: 10 * time.Second,
 	}
 
-	conn, _, err := dialer.Dial(wsURL, nil)
+	conn, resp, err := dialer.Dial(wsURL, nil)
 	if err != nil {
+		// Check for 401 Unauthorized — token likely expired
+		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
+			log.Println("[ws] 服务端返回 401，Token 可能已过期")
+			if w.onTokenExpired != nil {
+				w.onTokenExpired()
+			}
+		}
 		return false, err
 	}
 
@@ -212,11 +222,20 @@ func (w *WSClient) connectAndListen() (bool, error) {
 		w.onStatus(true)
 	}
 
-	// Configure pong handler — tighter deadline for faster dead connection detection
+	// Configure ping/pong handlers — tighter deadline for faster dead connection detection
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
+	})
+	// PingHandler: reply Pong to server pings and refresh read deadline
+	conn.SetPingHandler(func(appData string) error {
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		w.mu.Lock()
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		err := conn.WriteMessage(websocket.PongMessage, []byte(appData))
+		w.mu.Unlock()
+		return err
 	})
 
 	// Ping ticker — more frequent pings for faster dead connection detection

@@ -16,6 +16,7 @@ import (
 type ConfigResult struct {
 	ServerURL string
 	Username  string
+	Password  string
 	Token     string
 }
 
@@ -83,6 +84,7 @@ func ShowConfigGUI(prefill *AppConfig) *ConfigResult {
 			result = &ConfigResult{
 				ServerURL: server,
 				Username:  username,
+				Password:  password,
 				Token:     token,
 			}
 
