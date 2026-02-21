@@ -24,7 +24,8 @@ class WsClient(
     private val onClip: (String) -> Unit,
     private val onStatusChange: (Boolean) -> Unit,
     private val onDeviceRenamed: (String) -> Unit,
-    private val onForceDisconnect: (String) -> Unit
+    private val onForceDisconnect: (String) -> Unit,
+    private val onErrorMessage: ((String) -> Unit)? = null
 ) {
     companion object {
         private const val TAG = "WsClient"
@@ -77,12 +78,15 @@ class WsClient(
                     // If connect returns normally, the connection was closed
                     backoff = 1000L // reset on successful connection
                 } catch (e: Exception) {
-                    Log.e(TAG, "Connection error: ${e.message}")
+                    val errorMsg = e.message ?: "Unknown error"
+                    Log.e(TAG, "Connection error: $errorMsg")
+                    onErrorMessage?.invoke("连接错误: $errorMsg")
                 }
 
                 if (!isRunning.get() || forceDisconnected.get()) break
 
                 onStatusChange(false)
+                onErrorMessage?.invoke("已断开，${backoff / 1000}秒后重试...")
                 try {
                     Thread.sleep(backoff)
                 } catch (_: InterruptedException) {
@@ -103,6 +107,7 @@ class WsClient(
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "Connected")
+                onErrorMessage?.invoke("")  // Clear error on successful connection
                 onStatusChange(true)
             }
 
@@ -120,7 +125,9 @@ class WsClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "Failure: ${t.message}")
+                val errorMsg = t.message ?: "Unknown failure"
+                Log.e(TAG, "Failure: $errorMsg")
+                onErrorMessage?.invoke("WebSocket 失败: $errorMsg")
                 latch.countDown()
             }
         })

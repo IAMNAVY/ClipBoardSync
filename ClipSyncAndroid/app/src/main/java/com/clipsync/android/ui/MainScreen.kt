@@ -1,10 +1,13 @@
 package com.clipsync.android.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -23,10 +27,12 @@ import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Logout
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -60,9 +66,11 @@ import com.clipsync.android.service.ClipAccessibilityService
 fun MainScreen(
     config: AppConfig,
     isConnected: Boolean,
+    connectionError: String = "",
     onLogout: () -> Unit,
     onRenameDevice: (String) -> Unit,
-    onSyncModeChanged: (SyncMode) -> Unit
+    onSyncModeChanged: (SyncMode) -> Unit,
+    onReconnect: () -> Unit = {}
 ) {
     val context = LocalContext.current
     var showRenameDialog by remember { mutableStateOf(false) }
@@ -75,6 +83,7 @@ fun MainScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .systemBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -96,7 +105,9 @@ fun MainScreen(
             icon = if (isConnected) Icons.Default.Cloud else Icons.Default.CloudOff,
             title = if (isConnected) "已连接" else "未连接",
             subtitle = config.serverUrl,
-            isGood = isConnected
+            errorMessage = if (!isConnected && connectionError.isNotBlank()) connectionError else "",
+            isGood = isConnected,
+            onRefresh = onReconnect
         )
 
         // Sync Mode Selector
@@ -269,7 +280,7 @@ fun MainScreen(
         SetupItem(
             icon = Icons.Default.PhoneAndroid,
             title = "悬浮窗权限",
-            description = if (hasOverlay) "已授权 — 后台可读取剪贴板" else "未授权 — 可通过 ADB 授权或手动开启",
+            description = if (hasOverlay) "已授权 — 后台可读取剪贴板" else "未授权 — 需要通过 ADB 或手动开启",
             isReady = hasOverlay,
             actionLabel = if (hasOverlay) "已开启" else "去开启",
             onAction = if (hasOverlay) null else ({
@@ -328,21 +339,47 @@ fun MainScreen(
 }
 
 @Composable
-private fun StatusCard(icon: ImageVector, title: String, subtitle: String, isGood: Boolean) {
+private fun StatusCard(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    isGood: Boolean,
+    errorMessage: String = "",
+    onRefresh: (() -> Unit)? = null
+) {
     val color = if (isGood) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f))
     ) {
         Row(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 16.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(32.dp))
             Spacer(modifier = Modifier.width(12.dp))
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.SemiBold, color = color, fontSize = 16.sp)
                 Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(0.6f))
+                if (errorMessage.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        errorMessage,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.error.copy(0.8f),
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                    )
+                }
+            }
+            if (onRefresh != null) {
+                IconButton(onClick = onRefresh) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = "重新连接",
+                        tint = MaterialTheme.colorScheme.onSurface.copy(0.6f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
     }
@@ -397,6 +434,7 @@ private fun SetupItem(
 
 @Composable
 private fun AdbCommandRow(label: String, command: String) {
+    val context = LocalContext.current
     Column {
         Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         Card(
@@ -405,13 +443,35 @@ private fun AdbCommandRow(label: String, command: String) {
                 containerColor = MaterialTheme.colorScheme.background
             )
         ) {
-            Text(
-                text = command,
-                modifier = Modifier.padding(8.dp),
-                fontSize = 11.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 8.dp, top = 4.dp, bottom = 4.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = command,
+                    modifier = Modifier.weight(1f).padding(vertical = 4.dp),
+                    fontSize = 11.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                IconButton(
+                    onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText("ADB Command", command))
+                        Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "复制",
+                        modifier = Modifier.size(16.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(0.6f)
+                    )
+                }
+            }
         }
     }
 }

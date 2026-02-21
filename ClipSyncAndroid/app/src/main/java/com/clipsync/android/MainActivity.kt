@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -28,6 +29,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var prefs: PrefsManager
     private var isConnected by mutableStateOf(false)
+    private var connectionError by mutableStateOf("")
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -49,6 +51,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        enableEdgeToEdge()
+
         setContent {
             ClipSyncTheme {
                 val config by prefs.configFlow.collectAsState(initial = AppConfig())
@@ -57,9 +61,11 @@ class MainActivity : ComponentActivity() {
                     MainScreen(
                         config = config,
                         isConnected = isConnected,
+                        connectionError = connectionError,
                         onLogout = { handleLogout() },
                         onRenameDevice = { newName -> handleRenameDevice(newName) },
-                        onSyncModeChanged = { mode -> handleSyncModeChanged(mode) }
+                        onSyncModeChanged = { mode -> handleSyncModeChanged(mode) },
+                        onReconnect = { handleReconnect() }
                     )
                 } else {
                     LoginScreen(
@@ -77,19 +83,27 @@ class MainActivity : ComponentActivity() {
         // Bind to service to observe status
         ClipSyncService.instance?.let { service ->
             isConnected = service.isConnected
+            connectionError = service.lastErrorMessage
             service.onStatusChanged = { connected ->
-                runOnUiThread { isConnected = connected }
+                runOnUiThread {
+                    isConnected = connected
+                    if (connected) connectionError = ""
+                }
             }
             service.onForceDisconnected = { reason ->
                 runOnUiThread {
                     Toast.makeText(this, "已被强制下线: $reason", Toast.LENGTH_LONG).show()
                     isConnected = false
+                    connectionError = "已被强制下线: $reason"
                 }
             }
             service.onDeviceRenamed = { newName ->
                 runOnUiThread {
                     Toast.makeText(this, "设备已被重命名为: $newName", Toast.LENGTH_SHORT).show()
                 }
+            }
+            service.onErrorMessageChanged = { error ->
+                runOnUiThread { connectionError = error }
             }
         }
     }
@@ -100,6 +114,7 @@ class MainActivity : ComponentActivity() {
             service.onStatusChanged = null
             service.onForceDisconnected = null
             service.onDeviceRenamed = null
+            service.onErrorMessageChanged = null
         }
     }
 
@@ -121,18 +136,25 @@ class MainActivity : ComponentActivity() {
             runOnUiThread {
                 ClipSyncService.instance?.let { service ->
                     service.onStatusChanged = { connected ->
-                        runOnUiThread { isConnected = connected }
+                        runOnUiThread {
+                            isConnected = connected
+                            if (connected) connectionError = ""
+                        }
                     }
                     service.onForceDisconnected = { reason ->
                         runOnUiThread {
                             Toast.makeText(this@MainActivity, "已被强制下线: $reason", Toast.LENGTH_LONG).show()
                             isConnected = false
+                            connectionError = "已被强制下线: $reason"
                         }
                     }
                     service.onDeviceRenamed = { newName ->
                         runOnUiThread {
                             Toast.makeText(this@MainActivity, "设备已被重命名为: $newName", Toast.LENGTH_SHORT).show()
                         }
+                    }
+                    service.onErrorMessageChanged = { error ->
+                        runOnUiThread { connectionError = error }
                     }
                 }
             }
@@ -145,6 +167,20 @@ class MainActivity : ComponentActivity() {
             prefs.clearAuth()
         }
         isConnected = false
+        connectionError = ""
+    }
+
+    private fun handleReconnect() {
+        connectionError = ""
+        val service = ClipSyncService.instance
+        if (service != null) {
+            service.reconnect()
+            Toast.makeText(this, "正在重新连接...", Toast.LENGTH_SHORT).show()
+        } else {
+            // Service not running, restart it
+            ClipSyncService.start(this)
+            Toast.makeText(this, "正在重启服务...", Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun handleRenameDevice(newName: String) {

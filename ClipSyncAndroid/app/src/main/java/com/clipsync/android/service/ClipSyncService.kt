@@ -73,10 +73,15 @@ class ClipSyncService : Service() {
     var isLogcatMonitorActive: Boolean = false
         private set
 
+    @Volatile
+    var lastErrorMessage: String = ""
+        private set
+
     // Callbacks for MainActivity to observe state changes
     var onStatusChanged: ((Boolean) -> Unit)? = null
     var onForceDisconnected: ((String) -> Unit)? = null
     var onDeviceRenamed: ((String) -> Unit)? = null
+    var onErrorMessageChanged: ((String) -> Unit)? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -128,11 +133,20 @@ class ClipSyncService : Service() {
 
     /**
      * Start logcat-based clipboard monitor if READ_LOGS permission is available.
+     * Can also restart a dead monitor.
      */
     fun startLogcatMonitorIfAvailable() {
-        if (logcatMonitor != null) return
+        // If already running and active, skip
+        if (logcatMonitor?.isActive() == true) return
+
+        // Stop any existing dead monitor
+        logcatMonitor?.stop()
+        logcatMonitor = null
 
         if (LogcatClipboardMonitor.hasReadLogsPermission(this)) {
+            if (!LogcatClipboardMonitor.hasOverlayPermission(this)) {
+                Log.w(TAG, "READ_LOGS granted but overlay permission missing, logcat monitor may not work fully")
+            }
             Log.d(TAG, "READ_LOGS permission available, starting logcat monitor")
             logcatMonitor = LogcatClipboardMonitor(this)
             logcatMonitor?.start()
@@ -144,8 +158,17 @@ class ClipSyncService : Service() {
         }
     }
 
+    /** Debounce for launching floating activity */
+    @Volatile
+    private var lastFloatingLaunchTime: Long = 0
+    private val floatingLaunchDebounce: Long = 2000 // ms
+
     /**
      * Called when system clipboard changes via standard listener.
+     * This fires even when the app is in background, but reading
+     * clipboard will fail (returns null) on Android 10+.
+     * When that happens, we directly launch ClipboardFloatingActivity
+     * to steal focus and read the clipboard.
      */
     private fun handleClipboardChange() {
         try {
@@ -153,11 +176,27 @@ class ClipSyncService : Service() {
             if (!currentConfig.shouldUpload) return
 
             val content = clipboardHelper.readClipboard()
-            if (content.isNullOrBlank()) return
-
-            if (clipboardHelper.shouldUpload(content)) {
-                Log.d(TAG, "Standard listener detected change (${content.length} chars)")
-                onClipboardChanged(content)
+            if (content != null && content.isNotBlank()) {
+                // Foreground: successfully read clipboard
+                if (clipboardHelper.shouldUpload(content)) {
+                    Log.d(TAG, "Standard listener detected change (${content.length} chars)")
+                    onClipboardChanged(content)
+                }
+            } else {
+                // Background: clipboard read was denied
+                // Directly launch floating activity to steal focus and read
+                val now = System.currentTimeMillis()
+                if (now - lastFloatingLaunchTime > floatingLaunchDebounce) {
+                    lastFloatingLaunchTime = now
+                    if (LogcatClipboardMonitor.hasOverlayPermission(this)) {
+                        Log.d(TAG, "Clipboard read denied (background), launching floating activity")
+                        startActivity(
+                            com.clipsync.android.clipboard.ClipboardFloatingActivity.getIntent(this)
+                        )
+                    } else {
+                        Log.w(TAG, "Clipboard read denied but no overlay permission, cannot launch floating activity")
+                    }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error handling clipboard change: ${e.message}")
@@ -179,6 +218,7 @@ class ClipSyncService : Service() {
             },
             onStatusChange = { connected ->
                 isConnected = connected
+                if (connected) lastErrorMessage = ""
                 val suffix = if (isLogcatMonitorActive) "（后台监控已激活）" else ""
                 val statusText = if (connected) "已连接$suffix" else "已断开，重连中..."
                 updateNotification(statusText)
@@ -198,6 +238,10 @@ class ClipSyncService : Service() {
                 }
                 updateNotification("已被强制下线")
                 onForceDisconnected?.invoke(reason)
+            },
+            onErrorMessage = { error ->
+                lastErrorMessage = error
+                onErrorMessageChanged?.invoke(error)
             }
         )
         wsClient?.start()

@@ -61,8 +61,11 @@ class ClipAccessibilityService : AccessibilityService() {
         val service = ClipSyncService.instance ?: return
 
         try {
-            val content = service.clipboardHelper.readClipboard() ?: return
-            if (content.isBlank() || content == lastContent) return
+            val content = service.clipboardHelper.readClipboard()
+            // Note: readClipboard() returns null when in background (Android 10+ restriction)
+            // In that case, we don't try again here — the standard clipboard listener
+            // in ClipSyncService handles launching ClipboardFloatingActivity
+            if (content.isNullOrBlank() || content == lastContent) return
             lastContent = content
 
             if (service.clipboardHelper.shouldUpload(content)) {
@@ -70,7 +73,8 @@ class ClipAccessibilityService : AccessibilityService() {
                 service.onClipboardChanged(content)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error checking clipboard: ${e.message}")
+            // Don't log clipboard access denial errors from accessibility service
+            // to avoid flooding logcat
         }
     }
 }
