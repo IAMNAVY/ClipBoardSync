@@ -144,15 +144,34 @@ const indexHTML = `<!DOCTYPE html>
 
   @media (max-width: 768px) {
     .app-container { flex-direction: column; }
-    .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 12px 16px; flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 0; overflow: hidden; }
+    .sidebar {
+      width: 100%; border-right: none; border-bottom: 1px solid var(--border);
+      padding: 12px 16px; flex-direction: column; justify-content: flex-start;
+      align-items: stretch; gap: 0; overflow: visible;
+    }
     .main-content { padding: 20px 16px; }
     .sidebar-header { display: flex !important; align-items: center; justify-content: space-between; }
     .sidebar-logo { margin-bottom: 0 !important; }
     .sidebar-user { margin-top: 0 !important; padding: 12px 14px; }
-    .sidebar-nav { display: flex; flex-direction: row; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 12px 0 4px 0; }
-    .sidebar-collapsible { display: none; }
-    .sidebar.expanded .sidebar-collapsible { display: block; }
+    .sidebar-nav {
+      display: flex; flex-direction: row; gap: 8px;
+      justify-content: center; flex-wrap: wrap; padding: 12px 0 4px 0;
+    }
+    .sidebar-collapsible {
+      max-height: 0; overflow: hidden;
+      transition: max-height 0.3s ease-in-out, opacity 0.3s ease-in-out;
+      opacity: 0;
+    }
+    .sidebar.expanded .sidebar-collapsible {
+      max-height: 500px; opacity: 1;
+    }
     #sidebar-logo-desktop { display: none !important; }
+    .sidebar-toggle .toggle-arrow {
+      transition: transform 0.3s ease;
+    }
+    .sidebar.expanded .sidebar-toggle .toggle-arrow {
+      transform: rotate(180deg);
+    }
   }
   .sidebar-header { display: none; }
   .sidebar-toggle {
@@ -178,8 +197,8 @@ const indexHTML = `<!DOCTYPE html>
   .pagination button:disabled { opacity: 0.4; cursor: default; }
   .pagination span { font-size: 0.85em; color: var(--text-dim); }
 
-  /* Bottom spacing for clip list */
-  .content-wrapper { padding-bottom: 32px; }
+  /* Bottom spacing for clip list and page */
+  .content-wrapper { padding-bottom: 48px; }
 
   .sidebar-logo {
     display: flex;
@@ -195,7 +214,11 @@ const indexHTML = `<!DOCTYPE html>
     color: white; font-weight: bold; font-size: 1.2em;
   }
   .sidebar-logo-text { font-size: 1.25em; font-weight: 700; color: var(--text); }
-  
+  .sidebar-collapsible {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+  }
   .sidebar-nav {
     flex: 1;
     display: flex;
@@ -425,7 +448,7 @@ const indexHTML = `<!DOCTYPE html>
           <div class="sidebar-logo-text">ClipSync</div>
         </div>
         <button class="sidebar-toggle" onclick="toggleSidebar()" id="sidebar-toggle-btn">
-          <svg class="icon" viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+          <svg class="icon toggle-arrow" viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></svg>
         </button>
       </div>
       <div class="sidebar-logo" id="sidebar-logo-desktop">
@@ -503,7 +526,7 @@ const indexHTML = `<!DOCTYPE html>
             </div>
           </div>
 
-          <div class="card" style="margin-bottom: 24px;">
+          <div class="card" style="margin-bottom: 40px;">
             <div id="clip-list">
               <!-- Inject clips here -->
             </div>

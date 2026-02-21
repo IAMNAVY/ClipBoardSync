@@ -167,6 +167,65 @@ fun MainScreen(
             }
         )
 
+        // ADB-based background monitoring section
+        val isLogcatActive = com.clipsync.android.service.ClipSyncService.instance?.isLogcatMonitorActive == true
+        val hasOverlay = com.clipsync.android.clipboard.LogcatClipboardMonitor.hasOverlayPermission(context)
+
+        Spacer(modifier = Modifier.height(4.dp))
+        Text("后台剪贴板监控（ADB 激活）", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        Text(
+            "Android 10+ 限制后台读取剪贴板，通过 ADB 授权可解除此限制",
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurface.copy(0.5f)
+        )
+
+        // Status card for ADB monitoring
+        StatusCard(
+            icon = if (isLogcatActive) Icons.Default.CheckCircle else Icons.Default.Warning,
+            title = if (isLogcatActive) "后台监控已激活" else "后台监控未激活",
+            subtitle = if (isLogcatActive) "通过 Logcat 监控剪贴板变更" else "需要通过 ADB 授权来启用",
+            isGood = isLogcatActive
+        )
+
+        // ADB commands card — always visible
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("在电脑上执行以下 ADB 命令：", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                AdbCommandRow("1. 授权日志读取权限：",
+                    "adb -d shell pm grant com.clipsync.android android.permission.READ_LOGS")
+                Spacer(modifier = Modifier.height(6.dp))
+
+                AdbCommandRow("2. 允许悬浮窗权限：",
+                    "adb -d shell appops set com.clipsync.android SYSTEM_ALERT_WINDOW allow")
+                Spacer(modifier = Modifier.height(6.dp))
+
+                AdbCommandRow("3. 重启应用使权限生效：",
+                    "adb -d shell am force-stop com.clipsync.android")
+            }
+        }
+
+        // Overlay permission status
+        SetupItem(
+            icon = Icons.Default.PhoneAndroid,
+            title = "悬浮窗权限",
+            description = if (hasOverlay) "已授权 — 后台可读取剪贴板" else "未授权 — 可通过 ADB 授权或手动开启",
+            isReady = hasOverlay,
+            actionLabel = if (hasOverlay) "已开启" else "去开启",
+            onAction = if (hasOverlay) null else ({
+                val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                }
+                context.startActivity(intent)
+            })
+        )
+
         Spacer(modifier = Modifier.height(8.dp))
 
         // Logout button
@@ -278,6 +337,27 @@ private fun SetupItem(
                     Text(actionLabel, fontSize = 12.sp)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AdbCommandRow(label: String, command: String) {
+    Column {
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.background
+            )
+        ) {
+            Text(
+                text = command,
+                modifier = Modifier.padding(8.dp),
+                fontSize = 11.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.primary
+            )
         }
     }
 }

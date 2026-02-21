@@ -15,6 +15,7 @@ import android.util.Log
 import com.clipsync.android.MainActivity
 import com.clipsync.android.R
 import com.clipsync.android.clipboard.ClipboardHelper
+import com.clipsync.android.clipboard.LogcatClipboardMonitor
 import com.clipsync.android.data.AppConfig
 import com.clipsync.android.data.PrefsManager
 import com.clipsync.android.network.ApiClient
@@ -55,14 +56,21 @@ class ClipSyncService : Service() {
     private var currentConfig: AppConfig = AppConfig()
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Clipboard listener for background monitoring
+    // Standard clipboard listener (works when app is foreground)
     private var clipboardManager: ClipboardManager? = null
     private val clipChangedListener = ClipboardManager.OnPrimaryClipChangedListener {
         handleClipboardChange()
     }
 
+    // Logcat-based clipboard monitor (works in background with ADB permissions)
+    private var logcatMonitor: LogcatClipboardMonitor? = null
+
     @Volatile
     var isConnected: Boolean = false
+        private set
+
+    @Volatile
+    var isLogcatMonitorActive: Boolean = false
         private set
 
     // Callbacks for MainActivity to observe state changes
@@ -79,10 +87,13 @@ class ClipSyncService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification("正在连接..."))
         Log.d(TAG, "Service created")
 
-        // Register clipboard change listener on main thread
+        // Register standard clipboard listener (foreground only)
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboardManager?.addPrimaryClipChangedListener(clipChangedListener)
-        Log.d(TAG, "Clipboard listener registered")
+        Log.d(TAG, "Standard clipboard listener registered")
+
+        // Try to start logcat monitor if ADB permissions are granted
+        startLogcatMonitorIfAvailable()
 
         scope.launch {
             val config = prefs.configFlow.first()
@@ -101,10 +112,12 @@ class ClipSyncService : Service() {
 
     override fun onDestroy() {
         instance = null
-        // Unregister clipboard listener
         clipboardManager?.removePrimaryClipChangedListener(clipChangedListener)
         clipboardManager = null
-        Log.d(TAG, "Clipboard listener unregistered")
+        logcatMonitor?.stop()
+        logcatMonitor = null
+        isLogcatMonitorActive = false
+        Log.d(TAG, "Clipboard monitors stopped")
 
         wsClient?.stop()
         wsClient = null
@@ -114,8 +127,30 @@ class ClipSyncService : Service() {
     }
 
     /**
-     * Called when system clipboard changes (via OnPrimaryClipChangedListener).
-     * This fires reliably even when the app is in the background.
+     * Start logcat-based clipboard monitor if READ_LOGS permission is available.
+     */
+    fun startLogcatMonitorIfAvailable() {
+        if (logcatMonitor != null) return
+
+        if (LogcatClipboardMonitor.hasReadLogsPermission(this)) {
+            Log.d(TAG, "READ_LOGS permission available, starting logcat monitor")
+            logcatMonitor = LogcatClipboardMonitor(this) { content ->
+                if (clipboardHelper.shouldUpload(content)) {
+                    Log.d(TAG, "Logcat monitor detected change (${content.length} chars)")
+                    onClipboardChanged(content)
+                }
+            }
+            logcatMonitor?.start()
+            isLogcatMonitorActive = true
+            updateNotification(if (isConnected) "已连接（后台监控已激活）" else "已断开，重连中...")
+        } else {
+            Log.d(TAG, "READ_LOGS permission not available, logcat monitor disabled")
+            isLogcatMonitorActive = false
+        }
+    }
+
+    /**
+     * Called when system clipboard changes via standard listener.
      */
     private fun handleClipboardChange() {
         try {
@@ -123,7 +158,7 @@ class ClipSyncService : Service() {
             if (content.isNullOrBlank()) return
 
             if (clipboardHelper.shouldUpload(content)) {
-                Log.d(TAG, "Clipboard changed in background (${content.length} chars), uploading...")
+                Log.d(TAG, "Standard listener detected change (${content.length} chars)")
                 onClipboardChanged(content)
             }
         } catch (e: Exception) {
@@ -142,7 +177,8 @@ class ClipSyncService : Service() {
             },
             onStatusChange = { connected ->
                 isConnected = connected
-                val statusText = if (connected) "已连接" else "已断开，重连中..."
+                val suffix = if (isLogcatMonitorActive) "（后台监控已激活）" else ""
+                val statusText = if (connected) "已连接$suffix" else "已断开，重连中..."
                 updateNotification(statusText)
                 onStatusChanged?.invoke(connected)
             },
@@ -167,11 +203,9 @@ class ClipSyncService : Service() {
 
     /**
      * Upload clipboard content to server.
-     * Called by clipboard listener or accessibility service.
+     * Caller must check shouldUpload() before calling this.
      */
     fun onClipboardChanged(content: String) {
-        if (!clipboardHelper.shouldUpload(content)) return
-
         scope.launch {
             val config = prefs.configFlow.first()
             if (!config.isLoggedIn) return@launch
@@ -179,6 +213,7 @@ class ClipSyncService : Service() {
             val deviceName = config.deviceName.ifBlank { android.os.Build.MODEL }
             val result = ApiClient.pushClipboard(config.serverUrl, config.token, content, deviceName)
             if (result.isSuccess) {
+                clipboardHelper.markUploaded(content)
                 Log.d(TAG, "Clipboard uploaded (${content.length} chars)")
             } else {
                 Log.e(TAG, "Clipboard upload failed: ${result.exceptionOrNull()?.message}")

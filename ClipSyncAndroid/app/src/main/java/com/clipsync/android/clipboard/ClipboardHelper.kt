@@ -8,6 +8,9 @@ import android.util.Log
 /**
  * Manages clipboard read/write with an anti-loop mechanism to prevent
  * re-uploading content that was just written from a remote source.
+ *
+ * The anti-loop is based on content comparison (idempotent), not one-shot flags,
+ * so multiple callers can safely check without race conditions.
  */
 class ClipboardHelper(private val context: Context) {
 
@@ -15,22 +18,23 @@ class ClipboardHelper(private val context: Context) {
         private const val TAG = "ClipboardHelper"
     }
 
+    /** Content last received from the remote server and written to clipboard */
     @Volatile
     private var lastRemoteWrite: String = ""
 
+    /** Content last successfully uploaded to the server */
     @Volatile
-    private var skipNextChange: Boolean = false
+    private var lastUploadedContent: String = ""
 
     private val clipboardManager: ClipboardManager
         get() = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
 
     /**
      * Write content from a remote source to local clipboard.
-     * Sets anti-loop flags so the accessibility service won't re-upload it.
+     * Marks this content so it won't be re-uploaded.
      */
     fun writeClipboard(content: String) {
         lastRemoteWrite = content
-        skipNextChange = true
         try {
             val clip = ClipData.newPlainText("ClipSync", content)
             clipboardManager.setPrimaryClip(clip)
@@ -56,19 +60,35 @@ class ClipboardHelper(private val context: Context) {
     }
 
     /**
-     * Check if the given content should be uploaded (i.e., it's not from a remote write).
-     * Returns true if the content is a genuine local clipboard change.
+     * Check if the given content should be uploaded.
+     * This is idempotent — safe to call multiple times with the same content.
+     * Returns true only if the content is:
+     *   - not blank
+     *   - not the same as what was last received from server
+     *   - not the same as what was last uploaded
      */
     fun shouldUpload(content: String): Boolean {
         if (content.isBlank()) return false
 
-        if (skipNextChange) {
-            skipNextChange = false
-            if (content == lastRemoteWrite) {
-                Log.d(TAG, "Skipping remote write content (anti-loop)")
-                return false
-            }
+        // Don't re-upload content we just wrote from the server
+        if (content == lastRemoteWrite) {
+            Log.d(TAG, "Skipping: matches last remote write (anti-loop)")
+            return false
         }
+
+        // Don't upload the same content twice
+        if (content == lastUploadedContent) {
+            Log.d(TAG, "Skipping: already uploaded this content")
+            return false
+        }
+
         return true
+    }
+
+    /**
+     * Mark content as successfully uploaded to prevent duplicate uploads.
+     */
+    fun markUploaded(content: String) {
+        lastUploadedContent = content
     }
 }
