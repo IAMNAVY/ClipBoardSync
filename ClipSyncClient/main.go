@@ -79,11 +79,13 @@ func main() {
 	// Start system tray (this blocks)
 	devName := GetDeviceName(appConfig)
 	UpdateTrayDeviceName(devName)
+	UpdateTraySyncMode(appConfig.GetSyncMode())
 
 	StartTray(&trayCallbacks{
-		onReconfigure:  handleReconfigure,
-		onRenameDevice: handleRenameDevice,
-		onQuit:         handleQuit,
+		onReconfigure:     handleReconfigure,
+		onRenameDevice:    handleRenameDevice,
+		onSyncModeChanged: handleSyncModeChanged,
+		onQuit:            handleQuit,
 	})
 }
 
@@ -123,7 +125,13 @@ func startSyncServices() {
 		s := appConfig.ServerURL
 		t := appConfig.Token
 		d := GetDeviceName(appConfig)
+		canUpload := appConfig.ShouldUpload()
 		configLock.Unlock()
+
+		if !canUpload {
+			log.Println("[main] 上传已禁用，跳过")
+			return
+		}
 
 		if err := PushClipboard(s, t, content, d); err != nil {
 			log.Printf("[main] 上传剪贴板失败: %v", err)
@@ -137,6 +145,14 @@ func startSyncServices() {
 	wsClient = NewWSClient(serverURL, token, devName,
 		// onClip: write remote content to local clipboard
 		func(content string) {
+			configLock.Lock()
+			canDownload := appConfig.ShouldDownload()
+			configLock.Unlock()
+
+			if !canDownload {
+				log.Println("[main] 下载已禁用，跳过远程剪贴板")
+				return
+			}
 			clipMon.WriteClipboard(content)
 		},
 		// onStatus: update tray icon
@@ -249,6 +265,18 @@ func handleReconfigure() {
 func handleQuit() {
 	log.Println("[main] 正在退出...")
 	stopSyncServices()
+}
+
+// handleSyncModeChanged saves the new sync mode to config.
+func handleSyncModeChanged(mode string) {
+	log.Printf("[main] 同步方向已切换: %s", mode)
+	configLock.Lock()
+	appConfig.SyncMode = mode
+	configLock.Unlock()
+
+	if err := SaveConfig(appConfig); err != nil {
+		log.Printf("[main] 保存同步方向失败: %v", err)
+	}
 }
 
 // setupLogging configures logging to a file alongside the config.

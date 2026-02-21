@@ -9,9 +9,10 @@ import (
 
 // trayCallbacks holds the callbacks for tray menu actions.
 type trayCallbacks struct {
-	onReconfigure  func()
-	onRenameDevice func()
-	onQuit         func()
+	onReconfigure     func()
+	onRenameDevice    func()
+	onSyncModeChanged func(string)
+	onQuit            func()
 }
 
 var (
@@ -22,7 +23,14 @@ var (
 	trayReady          bool
 	cachedConnected    bool
 	cachedDeviceName   string
+	cachedSyncMode     string
 	trayMu             sync.Mutex
+
+	// Sync mode menu items
+	traySyncBidi     *systray.MenuItem
+	traySyncUpload   *systray.MenuItem
+	traySyncDownload *systray.MenuItem
+	traySyncOff      *systray.MenuItem
 )
 
 // StartTray initializes the system tray. This blocks the calling goroutine.
@@ -66,6 +74,19 @@ func UpdateTrayDeviceName(name string) {
 	systray.SetTooltip("ClipSync - " + name)
 }
 
+// UpdateTraySyncMode updates the sync mode display in the tray menu.
+func UpdateTraySyncMode(mode string) {
+	trayMu.Lock()
+	cachedSyncMode = mode
+	ready := trayReady
+	trayMu.Unlock()
+
+	if !ready {
+		return
+	}
+	applySyncModeCheck(mode)
+}
+
 func onTrayReady() {
 	systray.SetIcon(iconBytes)
 	systray.SetTitle("ClipSync")
@@ -93,6 +114,21 @@ func onTrayReady() {
 
 	systray.AddSeparator()
 
+	// Sync mode submenu
+	mSyncMode := systray.AddMenuItem("同步方向 (Sync Mode)", "设置同步方向")
+	traySyncBidi = mSyncMode.AddSubMenuItemCheckbox("↔ 双向同步 (Bidirectional)", "本机与云端双向同步", true)
+	traySyncUpload = mSyncMode.AddSubMenuItemCheckbox("→ 仅上传 (Upload Only)", "仅本机上传到云端", false)
+	traySyncDownload = mSyncMode.AddSubMenuItemCheckbox("← 仅下载 (Download Only)", "仅接收云端内容", false)
+	traySyncOff = mSyncMode.AddSubMenuItemCheckbox("✕ 关闭同步 (Off)", "暂停所有同步", false)
+
+	// Apply cached sync mode
+	trayMu.Lock()
+	initMode := cachedSyncMode
+	trayMu.Unlock()
+	if initMode != "" {
+		applySyncModeCheck(initMode)
+	}
+
 	// Rename device
 	mRenameDevice := systray.AddMenuItem("重命名设备 (Rename)", "修改设备名称")
 
@@ -115,6 +151,14 @@ func onTrayReady() {
 	go func() {
 		for {
 			select {
+			case <-traySyncBidi.ClickedCh:
+				handleSyncModeClick(SyncBidirectional)
+			case <-traySyncUpload.ClickedCh:
+				handleSyncModeClick(SyncUploadOnly)
+			case <-traySyncDownload.ClickedCh:
+				handleSyncModeClick(SyncDownloadOnly)
+			case <-traySyncOff.ClickedCh:
+				handleSyncModeClick(SyncOff)
 			case <-trayAutoStartItem.ClickedCh:
 				if trayAutoStartItem.Checked() {
 					trayAutoStartItem.Uncheck()
@@ -143,6 +187,35 @@ func onTrayReady() {
 			}
 		}
 	}()
+}
+
+func handleSyncModeClick(mode string) {
+	applySyncModeCheck(mode)
+	if trayCbs != nil && trayCbs.onSyncModeChanged != nil {
+		trayCbs.onSyncModeChanged(mode)
+	}
+}
+
+func applySyncModeCheck(mode string) {
+	if traySyncBidi == nil {
+		return
+	}
+	traySyncBidi.Uncheck()
+	traySyncUpload.Uncheck()
+	traySyncDownload.Uncheck()
+	traySyncOff.Uncheck()
+	switch mode {
+	case SyncBidirectional:
+		traySyncBidi.Check()
+	case SyncUploadOnly:
+		traySyncUpload.Check()
+	case SyncDownloadOnly:
+		traySyncDownload.Check()
+	case SyncOff:
+		traySyncOff.Check()
+	default:
+		traySyncBidi.Check()
+	}
 }
 
 func onTrayExit() {

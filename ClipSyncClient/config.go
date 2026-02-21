@@ -8,6 +8,14 @@ import (
 	"path/filepath"
 )
 
+// SyncMode controls the clipboard sync direction.
+const (
+	SyncBidirectional = "bidirectional" // phone ↔ cloud
+	SyncUploadOnly    = "upload_only"   // phone → cloud
+	SyncDownloadOnly  = "download_only" // cloud → phone
+	SyncOff           = "off"           // disabled
+)
+
 // AppConfig holds user-persistent configuration.
 type AppConfig struct {
 	ServerURL  string `json:"server_url"`
@@ -15,6 +23,29 @@ type AppConfig struct {
 	Token      string `json:"token"`
 	AutoStart  bool   `json:"auto_start"`
 	DeviceName string `json:"device_name"`
+	SyncMode   string `json:"sync_mode"`
+}
+
+// GetSyncMode returns the sync mode, defaulting to bidirectional.
+func (c *AppConfig) GetSyncMode() string {
+	switch c.SyncMode {
+	case SyncBidirectional, SyncUploadOnly, SyncDownloadOnly, SyncOff:
+		return c.SyncMode
+	default:
+		return SyncBidirectional
+	}
+}
+
+// ShouldUpload returns true if local clipboard changes should be uploaded.
+func (c *AppConfig) ShouldUpload() bool {
+	m := c.GetSyncMode()
+	return m == SyncBidirectional || m == SyncUploadOnly
+}
+
+// ShouldDownload returns true if remote clipboard changes should be written locally.
+func (c *AppConfig) ShouldDownload() bool {
+	m := c.GetSyncMode()
+	return m == SyncBidirectional || m == SyncDownloadOnly
 }
 
 // GetDeviceName returns the configured device name, falling back to hostname.
