@@ -17,8 +17,9 @@ type WSClient struct {
 	token      string
 	deviceName string
 
-	conn *websocket.Conn
-	mu   sync.Mutex
+	conn      *websocket.Conn
+	mu        sync.Mutex
+	connected bool // current connection state
 
 	clientID uint64 // assigned by server via welcome message
 
@@ -29,8 +30,9 @@ type WSClient struct {
 
 	forceDisconnected bool // set when server sends force_disconnect
 
-	stopCh chan struct{}
-	done   chan struct{}
+	stopCh      chan struct{}
+	done        chan struct{}
+	reconnectCh chan struct{} // external trigger for immediate reconnect
 }
 
 // NewWSClient creates a new WebSocket client.
@@ -43,8 +45,9 @@ func NewWSClient(serverURL, token, deviceName string, onClip func(string), onSta
 		onStatus:          onStatus,
 		onDeviceRenamed:   onDeviceRenamed,
 		onForceDisconnect: onForceDisconnect,
-		stopCh:          make(chan struct{}),
-		done:            make(chan struct{}),
+		stopCh:            make(chan struct{}),
+		done:              make(chan struct{}),
+		reconnectCh:       make(chan struct{}, 1),
 	}
 }
 
@@ -62,6 +65,31 @@ func (w *WSClient) Stop() {
 	}
 	w.mu.Unlock()
 	<-w.done
+}
+
+// Reconnect triggers an immediate reconnection attempt.
+// If already connected, it closes the current connection first.
+func (w *WSClient) Reconnect() {
+	log.Println("[ws] 手动触发重连")
+	w.mu.Lock()
+	if w.conn != nil {
+		w.conn.Close() // force close to break the read loop
+	}
+	w.mu.Unlock()
+
+	// Signal the connect loop to skip the backoff wait
+	select {
+	case w.reconnectCh <- struct{}{}:
+	default:
+		// already signalled, no need to send again
+	}
+}
+
+// IsConnected returns the current connection state.
+func (w *WSClient) IsConnected() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.connected
 }
 
 // UpdateToken updates the JWT token for reconnection.
@@ -94,8 +122,9 @@ func (w *WSClient) buildWSURL() string {
 func (w *WSClient) connectLoop() {
 	defer close(w.done)
 
-	backoff := time.Second
-	maxBackoff := 30 * time.Second
+	const initialBackoff = time.Second
+	const maxBackoff = 30 * time.Second
+	backoff := initialBackoff
 
 	for {
 		select {
@@ -104,12 +133,27 @@ func (w *WSClient) connectLoop() {
 		default:
 		}
 
-		err := w.connectAndListen()
+		// Drain any pending reconnect signal before connecting
+		select {
+		case <-w.reconnectCh:
+		default:
+		}
+
+		wasConnected, err := w.connectAndListen()
 		if err != nil {
 			log.Printf("[ws] 连接断开: %v", err)
 		}
+
+		w.mu.Lock()
+		w.connected = false
+		w.mu.Unlock()
 		if w.onStatus != nil {
 			w.onStatus(false)
+		}
+
+		// Reset backoff if we had a successful connection (was actually online)
+		if wasConnected {
+			backoff = initialBackoff
 		}
 
 		// If force disconnected by server, stop reconnecting
@@ -121,10 +165,15 @@ func (w *WSClient) connectLoop() {
 			return
 		}
 
-		// Wait before reconnecting
+		log.Printf("[ws] 将在 %v 后重连...", backoff)
+
+		// Wait before reconnecting, but allow immediate reconnect via reconnectCh
 		select {
 		case <-w.stopCh:
 			return
+		case <-w.reconnectCh:
+			log.Println("[ws] 收到重连信号，立即重连")
+			backoff = initialBackoff // reset backoff on manual reconnect
 		case <-time.After(backoff):
 		}
 
@@ -136,7 +185,10 @@ func (w *WSClient) connectLoop() {
 	}
 }
 
-func (w *WSClient) connectAndListen() error {
+// connectAndListen connects to the server and processes messages.
+// Returns (wasConnected, error) where wasConnected indicates if the
+// connection was ever successfully established.
+func (w *WSClient) connectAndListen() (bool, error) {
 	wsURL := w.buildWSURL()
 	log.Printf("[ws] 正在连接 %s", wsURL)
 
@@ -146,12 +198,13 @@ func (w *WSClient) connectAndListen() error {
 
 	conn, _, err := dialer.Dial(wsURL, nil)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	w.mu.Lock()
 	w.conn = conn
 	w.clientID = 0 // reset until we receive welcome
+	w.connected = true
 	w.mu.Unlock()
 
 	log.Println("[ws] 已连接")
@@ -159,18 +212,18 @@ func (w *WSClient) connectAndListen() error {
 		w.onStatus(true)
 	}
 
-	// Configure pong handler
-	conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+	// Configure pong handler — tighter deadline for faster dead connection detection
+	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
+		conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 
-	// Ping ticker
+	// Ping ticker — more frequent pings for faster dead connection detection
 	pingDone := make(chan struct{})
 	go func() {
 		defer close(pingDone)
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(20 * time.Second)
 		defer ticker.Stop()
 		for {
 			select {
@@ -197,7 +250,7 @@ func (w *WSClient) connectAndListen() error {
 	for {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
-			return err
+			return true, err
 		}
 
 		var msg map[string]interface{}
@@ -240,7 +293,7 @@ func (w *WSClient) connectAndListen() error {
 				// Call asynchronously to avoid blocking the read loop exit
 				go cb(reason)
 			}
-			return nil // exit read loop, connectLoop will see forceDisconnected
+			return true, nil // exit read loop, connectLoop will see forceDisconnected
 		}
 	}
 }

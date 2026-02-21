@@ -12,6 +12,7 @@ type trayCallbacks struct {
 	onReconfigure     func()
 	onRenameDevice    func()
 	onSyncModeChanged func(string)
+	onReconnect       func()
 	onQuit            func()
 }
 
@@ -92,9 +93,8 @@ func onTrayReady() {
 	systray.SetTitle("ClipSync")
 	systray.SetTooltip("ClipSync - 剪贴板同步")
 
-	// Status (disabled — just for display)
-	trayStatusItem = systray.AddMenuItem("○ 未连接 (Disconnected)", "WebSocket 连接状态")
-	trayStatusItem.Disable()
+	// Status (clickable — triggers reconnect)
+	trayStatusItem = systray.AddMenuItem("○ 未连接 (Disconnected)", "点击重新连接 / Click to reconnect")
 
 	// Device name (disabled — just for display)
 	trayDeviceNameItem = systray.AddMenuItem("📱 设备", "当前设备名称")
@@ -151,6 +151,10 @@ func onTrayReady() {
 	go func() {
 		for {
 			select {
+			case <-trayStatusItem.ClickedCh:
+				if trayCbs != nil && trayCbs.onReconnect != nil {
+					go trayCbs.onReconnect()
+				}
 			case <-traySyncBidi.ClickedCh:
 				handleSyncModeClick(SyncBidirectional)
 			case <-traySyncUpload.ClickedCh:

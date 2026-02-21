@@ -85,6 +85,7 @@ func main() {
 		onReconfigure:     handleReconfigure,
 		onRenameDevice:    handleRenameDevice,
 		onSyncModeChanged: handleSyncModeChanged,
+		onReconnect:       handleReconnect,
 		onQuit:            handleQuit,
 	})
 }
@@ -265,6 +266,16 @@ func handleReconfigure() {
 func handleQuit() {
 	log.Println("[main] 正在退出...")
 	stopSyncServices()
+}
+
+// handleReconnect triggers an immediate reconnection attempt.
+func handleReconnect() {
+	if wsClient != nil {
+		log.Println("[main] 用户手动触发重连")
+		wsClient.Reconnect()
+	} else {
+		log.Println("[main] WebSocket 客户端未初始化，无法重连")
+	}
 }
 
 // handleSyncModeChanged saves the new sync mode to config.
