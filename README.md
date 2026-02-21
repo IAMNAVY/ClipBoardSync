@@ -180,6 +180,15 @@ curl -X POST http://localhost:8080/api/login \
 
 ---
 
+## 🤖 AI Acknowledgements
+
+This project was developed with the assistance of advanced AI models to optimize architecture, refine code quality, and accelerate cross-platform implementation:
+
+* **Claude 4.6 Opus** (via Antigravity): Assisted in core logic design, Android AccessibilityService integration, and Windows system tray implementation.
+* **Gemini 3.1 Pro**: Assisted in WebSocket synchronization strategy, documentation, and Docker optimization.
+
+---
+
 ## 📄 License
 
 MIT

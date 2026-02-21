@@ -177,6 +177,14 @@ curl -X POST http://localhost:8080/api/login \
   -H "Content-Type: application/json" \
   -d '{"username":"demo","password":"password123"}'
 ```
+---
+
+## 🤖 AI 开发声明
+
+本项目在开发过程中得到了AI辅助，用于优化架构设计、提升代码质量及加速跨平台实现：
+
+* **Claude 4.6 Opus** (via Antigravity): 辅助核心逻辑设计、Android 无障碍服务集成及 Windows 托盘程序实现。
+* **Gemini 3.1 Pro**: 辅助 WebSocket 同步策略制定、文档编写及 Docker 部署优化。
 
 ---
 
