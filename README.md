@@ -59,6 +59,8 @@
 
 ## 🚀 Quick Start
 
+> [Default] Username: admin Password: admin123, Before performing any operation, you should log in to the administrator account and change the password.
+
 ### 1. Deploy the Server
 
 The fastest way is with Docker:
