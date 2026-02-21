@@ -16,6 +16,7 @@ import com.clipsync.android.MainActivity
 import com.clipsync.android.R
 import com.clipsync.android.clipboard.ClipboardHelper
 import com.clipsync.android.clipboard.LogcatClipboardMonitor
+import com.clipsync.android.clipboard.OverlayClipboardReader
 import com.clipsync.android.data.AppConfig
 import com.clipsync.android.data.PrefsManager
 import com.clipsync.android.network.ApiClient
@@ -65,6 +66,9 @@ class ClipSyncService : Service() {
     // Logcat-based clipboard monitor (works in background with ADB permissions)
     private var logcatMonitor: LogcatClipboardMonitor? = null
 
+    // Overlay-based clipboard reader (non-intrusive, no Activity needed)
+    private var overlayReader: OverlayClipboardReader? = null
+
     @Volatile
     var isConnected: Boolean = false
         private set
@@ -88,6 +92,7 @@ class ClipSyncService : Service() {
         instance = this
         prefs = PrefsManager(this)
         clipboardHelper = ClipboardHelper(this)
+        overlayReader = OverlayClipboardReader(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification("正在连接..."))
         Log.d(TAG, "Service created")
@@ -158,17 +163,17 @@ class ClipSyncService : Service() {
         }
     }
 
-    /** Debounce for launching floating activity */
+    /** Debounce for overlay clipboard reading */
     @Volatile
-    private var lastFloatingLaunchTime: Long = 0
-    private val floatingLaunchDebounce: Long = 2000 // ms
+    private var lastOverlayReadTime: Long = 0
+    private val overlayReadDebounce: Long = 2000 // ms
 
     /**
      * Called when system clipboard changes via standard listener.
      * This fires even when the app is in background, but reading
      * clipboard will fail (returns null) on Android 10+.
-     * When that happens, we directly launch ClipboardFloatingActivity
-     * to steal focus and read the clipboard.
+     * When that happens, we use OverlayClipboardReader to create
+     * a tiny invisible overlay window to steal focus and read.
      */
     private fun handleClipboardChange() {
         try {
@@ -184,22 +189,48 @@ class ClipSyncService : Service() {
                 }
             } else {
                 // Background: clipboard read was denied
-                // Directly launch floating activity to steal focus and read
+                // Use overlay window to steal focus and read (non-intrusive)
                 val now = System.currentTimeMillis()
-                if (now - lastFloatingLaunchTime > floatingLaunchDebounce) {
-                    lastFloatingLaunchTime = now
-                    if (LogcatClipboardMonitor.hasOverlayPermission(this)) {
-                        Log.d(TAG, "Clipboard read denied (background), launching floating activity")
-                        startActivity(
-                            com.clipsync.android.clipboard.ClipboardFloatingActivity.getIntent(this)
-                        )
-                    } else {
-                        Log.w(TAG, "Clipboard read denied but no overlay permission, cannot launch floating activity")
+                if (now - lastOverlayReadTime > overlayReadDebounce) {
+                    lastOverlayReadTime = now
+                    Log.d(TAG, "Clipboard read denied (background), using overlay reader")
+                    mainHandler.post {
+                        overlayReader?.tryRead { overlayContent ->
+                            if (overlayContent != null && overlayContent.isNotBlank()) {
+                                if (clipboardHelper.shouldUpload(overlayContent)) {
+                                    Log.d(TAG, "Overlay read success (${overlayContent.length} chars)")
+                                    onClipboardChanged(overlayContent)
+                                }
+                            } else {
+                                Log.w(TAG, "Overlay read returned null")
+                            }
+                        }
                     }
                 }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error handling clipboard change: ${e.message}")
+        }
+    }
+
+    /**
+     * Public method for LogcatClipboardMonitor to request an overlay clipboard read.
+     * Must be called on the main thread.
+     */
+    fun readClipboardViaOverlay() {
+        if (!currentConfig.shouldUpload) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastOverlayReadTime < overlayReadDebounce) return
+        lastOverlayReadTime = now
+
+        overlayReader?.tryRead { content ->
+            if (content != null && content.isNotBlank()) {
+                if (clipboardHelper.shouldUpload(content)) {
+                    Log.d(TAG, "Overlay read (logcat trigger) success (${content.length} chars)")
+                    onClipboardChanged(content)
+                }
+            }
         }
     }
 

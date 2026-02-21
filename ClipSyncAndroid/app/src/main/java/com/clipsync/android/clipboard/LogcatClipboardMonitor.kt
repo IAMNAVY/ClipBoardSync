@@ -185,13 +185,16 @@ class LogcatClipboardMonitor(
                     val currentTime = System.currentTimeMillis()
                     if (currentTime - lastActivityStartTime > activityDebounceTime) {
                         lastActivityStartTime = currentTime
-                        Log.d(TAG, "Clipboard denial detected, launching floating activity")
+                        Log.d(TAG, "Clipboard denial detected, requesting overlay read")
                         try {
-                            context.startActivity(
-                                ClipboardFloatingActivity.getIntent(context)
-                            )
+                            val service = com.clipsync.android.service.ClipSyncService.instance
+                            if (service != null) {
+                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                    service.readClipboardViaOverlay()
+                                }
+                            }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Failed to start floating activity: ${e.message}")
+                            Log.e(TAG, "Failed to request overlay read: ${e.message}")
                         }
                     }
                 }
