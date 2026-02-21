@@ -1,44 +1,94 @@
-# ClipSync Client (桌面客户端)
+# ClipSync Client
 
-ClipSync 官方提供的轻量级 Windows 桌面客户端，基于 Go 语言编写，实现与 ClipSyncServer 的无缝实时剪贴板同步。
+> The official Windows desktop tray application for ClipSync — silent, seamless, always-on clipboard sync.
 
-## ✨ 核心特性
+[中文文档](./README_CN.md)
 
-- **无感后台运行**：以系统托盘（System Tray）图标常驻后台运行。
-- **内置图形界面**：包含开箱即用的配置窗口（GUI），可直接在桌面修改服务器地址、账号和 Token。
-- **实时双向同步**：通过 WebSocket 与服务器保持长连接，实现秒级剪贴板同步。
-- **开机自启支持**：支持一键添加到系统开机启动项（注册表）。
-- **智能防死循环**：内置剪贴板读取/写入防死循环（Anti-loop）机制，避免与其他设备产生无休止的同步。
-- **远程管理**：支持从 Web 端直接强制设备下线，或远程重命名当前设备。
+---
 
-## 🛠️ 编译说明
+## 🌟 Features
 
-本项目需要使用支持 Windows GUI 的 Go 编译器。
+- **System Tray Residence** — Runs silently as a tray icon in the notification area; zero UI clutter.
+- **Native GUI Configuration** — Built-in graphical window for server URL, account, and token setup — no config files to edit manually.
+- **Real-time Bidirectional Sync** — Maintains a persistent WebSocket connection with automatic reconnection; sub-second clipboard delivery.
+- **Sync Mode Control** — Four modes: bidirectional, upload-only, download-only, and off — switchable from the tray menu.
+- **Boot Auto-start** — One-click toggle to add/remove from Windows startup via Registry.
+- **Smart Anti-loop** — Clipboard write/read guards prevent infinite sync storms between devices.
+- **Device Naming** — Set a friendly name for this PC (shown in the Web dashboard).
+- **Remote Management** — Responds to server-initiated force-disconnect and remote rename commands.
+- **Secure Config** — Credentials are stored locally with Base64 obfuscation in `%APPDATA%\ClipSyncClient\config.json`.
 
-1. **安装环境**：确保已安装 Go 1.23+。
-2. **安装依赖的 C 编译器**：部分 GUI 组件和剪贴板库需要 CGO 支持（如 TDM-GCC 或 MSYS2）。
-3. **拉取依赖**：
-   ```bash
-   go mod tidy
-   ```
-4. **编译为隐藏命令行的 Windows 程序**：
-   ```bash
-   go build -ldflags="-H windowsgui" -o ClipSyncClient.exe
-   ```
+## 🛠️ Tech Stack
 
-## 🚀 使用指南
+| Component | Technology |
+|---|---|
+| Language | Go 1.23+ |
+| WebSocket | Gorilla WebSocket |
+| Clipboard | `golang.design/x/clipboard` (CGO) |
+| System Tray | `fyne.io/systray` |
+| GUI | `github.com/nickolai-kolin/dlgs` |
+| Auto-start | Windows Registry via `golang.org/x/sys/windows/registry` |
 
-1. 双击运行 `ClipSyncClient.exe`。
-2. 首次运行会弹出**配置窗口**，要求输入：
-   - **服务端地址**（例如：`http://your-server-ip:8080` 或 `wss://...`）
-   - **用户名**及**Token**（可通过在网页端登录并查看系统设置/控制台获取）
-3. 配置完成后，客户端将隐藏到任务栏托盘（右下角小图标）。
-4. **托盘菜单功能**：
-   - **修改设备名称**：为当前电脑设置一个易于辨认的名字
-   - **开机自启**：开启/关闭随系统启动
-   - **重新配置**：打开配置页面修改服务器信息
-   - **退出程序**
+## 📁 Source Files
 
-## 📄 开源协议
+| File | Responsibility |
+|---|---|
+| `main.go` | Entry point, lifecycle management (config → sync → tray), child-process GUI spawning |
+| `ws.go` | WebSocket client: connect, reconnect, ping/pong, message routing (clip / force\_disconnect / device\_renamed) |
+| `clipboard.go` | Clipboard monitor goroutine with anti-loop filtering |
+| `tray.go` | System tray icon, menu items, status updates, sync mode submenu |
+| `gui.go` | Native configuration & rename dialog windows (spawned as child processes) |
+| `config.go` | `AppConfig` struct, load/save with Base64 encoding, sync mode helpers |
+| `api.go` | HTTP calls to server REST API (push clipboard, etc.) |
+| `autostart.go` | Windows startup registry key management |
+| `icon.go` | Embedded tray icon data |
+
+## 🚀 Build
+
+**Prerequisites:**
+- Go 1.23+
+- C compiler with CGO support (e.g., [TDM-GCC](https://jmeubank.github.io/tdm-gcc/) or [MSYS2 MinGW-w64](https://www.msys2.org/))
+
+```bash
+# Install dependencies
+go mod tidy
+
+# Build (hides console window on Windows)
+go build -ldflags="-H windowsgui" -o ClipSyncClient.exe
+```
+
+## 📖 Usage
+
+### First Launch
+
+1. Double-click `ClipSyncClient.exe`.
+2. A **Configuration Window** appears — enter:
+   - **Server URL** — e.g. `http://your-server:8080` or `https://clip.yourdomain.com`
+   - **Username** — your ClipSync account
+   - **Token** — obtain from the Web dashboard after logging in
+3. Click OK. The client connects and hides to the system tray.
+
+### Tray Menu
+
+Right-click the tray icon to access:
+
+| Action | Description |
+|---|---|
+| **Status** | Shows connection status (✅ Connected / ❌ Disconnected) |
+| **Device Name** | Displays current device name |
+| **Sync Mode** | Switch between Bidirectional / Upload Only / Download Only / Off |
+| **Rename Device** | Opens a dialog to change this device's display name |
+| **Auto Start** | Toggle Windows startup on/off |
+| **Reconfigure** | Re-open the configuration window (stops sync, then restarts) |
+| **Exit** | Cleanly shut down the client |
+
+### Config File Location
+
+```
+%APPDATA%\ClipSyncClient\config.json   (Base64 encoded)
+%APPDATA%\ClipSyncClient\clipsync.log  (Runtime log)
+```
+
+## 📄 License
 
 MIT

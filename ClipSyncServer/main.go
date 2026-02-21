@@ -19,7 +19,8 @@ var listenAddr = getEnv("LISTEN_ADDR", ":8080")
 
 func main() {
 	// Use release mode for lower memory footprint
-	gin.SetMode(gin.DebugMode)
+	// gin.SetMode(gin.DebugMode)
+	gin.SetMode(gin.ReleaseMode)
 
 	initDB()
 

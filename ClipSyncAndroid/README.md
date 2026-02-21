@@ -1,34 +1,118 @@
-# ClipSync Android 客户端
+# ClipSync Android
 
-ClipSync 官方 Android 客户端，基于 Kotlin + Jetpack Compose 开发，实现与 ClipSyncServer 的实时剪贴板同步。
+> The official Android client for ClipSync — always-on clipboard sync powered by AccessibilityService.
 
-## ✨ 核心特性
+[中文文档](./README_CN.md)
 
-- **无障碍服务剪贴板监控**：通过 Android 无障碍服务 (AccessibilityService) 实现 Android 10+ 后台剪贴板变更监控
-- **WebSocket 实时双向同步**：与服务端保持长连接，剪贴板变更秒级同步到所有设备
-- **前台服务保活**：常驻通知栏显示连接状态，防止系统杀死后台进程
-- **开机自启**：支持开机后自动启动同步服务
-- **省电白名单引导**：引导用户关闭电池优化，避免系统限制后台同步
-- **智能防死循环**：内置 Anti-loop 机制，远程写入的剪贴板内容不会被重复上报
-- **远程管理**：支持服务端强制下线、远程重命名设备
-- **本地设备重命名**：可在 App 内修改当前设备名称
+---
 
-## 🛠️ 构建
+## 🌟 Features
 
-1. **环境要求**：Android Studio + JDK 17
-2. **最低 Android 版本**：Android 10 (API 29)
-3. **打开项目**：使用 Android Studio 打开 `ClipSyncAndroid` 目录
-4. **编译**：`./gradlew assembleDebug`
+- **Accessibility-based Clipboard Monitoring** — Uses Android `AccessibilityService` to detect clipboard changes on Android 10+ where background clipboard access is restricted by the OS.
+- **Logcat Fallback Monitor** — Secondary clipboard detection mechanism via logcat parsing for broader compatibility.
+- **Real-time Bidirectional Sync** — Persistent WebSocket connection delivers clipboard content across devices within milliseconds.
+- **Foreground Service Keep-alive** — Persistent notification displays connection status and prevents system process killing.
+- **Boot Auto-start** — `BroadcastReceiver` automatically starts the sync service after device reboot.
+- **Battery Optimization Bypass** — In-app one-click guide to disable battery optimization for uninterrupted background operation.
+- **Sync Mode Control** — Four modes: Bidirectional (↔), Upload Only (→), Download Only (←), Off — switchable from within the app.
+- **Smart Anti-loop** — Filters out remotely-written clipboard content to prevent infinite sync loops.
+- **Remote Management** — Handles server-side force-disconnect, remote device renaming, and reflects changes in real-time.
+- **Local Device Renaming** — Change the device display name directly from the app (auto-reconnects to apply).
+- **Modern UI** — Built with Jetpack Compose, adaptive Material 3 theming.
 
-## 🚀 使用指南
+## 🛠️ Tech Stack
 
-1. 安装 APK 后打开 App，输入服务器地址、用户名和密码登录
-2. 按照 App 内引导开启以下权限：
-   - **无障碍服务**：系统设置 → 无障碍 → ClipSync → 开启
-   - **忽略电池优化**：App 内一键设置
-   - **自启动**：部分厂商需在系统设置中手动允许
-3. 登录成功后，服务自动在后台运行，实现剪贴板实时同步
+| Layer | Technology |
+|---|---|
+| Language | Kotlin |
+| UI | Jetpack Compose + Material 3 |
+| Networking | OkHttp (REST), OkHttp WebSocket |
+| Clipboard | AccessibilityService, ClipboardManager, Logcat monitor |
+| Background | Foreground Service, BroadcastReceiver (BOOT_COMPLETED) |
+| Persistence | DataStore / SharedPreferences via `PrefsManager` |
+| Min SDK | Android 10 (API 29) |
 
-## 📄 开源协议
+## 📁 Project Structure
+
+```
+app/src/main/java/com/clipsync/android/
+├── ClipSyncApp.kt                    # Application class
+├── MainActivity.kt                   # Main activity: login/main screen routing, lifecycle
+├── clipboard/
+│   ├── ClipboardHelper.kt            # Clipboard read/write utilities
+│   ├── ClipboardFloatingActivity.kt  # Transparent activity for foreground clipboard access
+│   └── LogcatClipboardMonitor.kt     # Logcat-based clipboard change detection
+├── data/
+│   ├── AppConfig.kt                  # Configuration data class (serverUrl, token, syncMode, etc.)
+│   └── PrefsManager.kt              # Persistent storage (encrypted prefs / DataStore)
+├── network/
+│   ├── ApiClient.kt                  # HTTP client for REST API calls (login, push, etc.)
+│   └── WsClient.kt                  # WebSocket client with reconnect, ping/pong, message routing
+├── service/
+│   ├── ClipSyncService.kt           # Foreground service: orchestrates WS + clipboard monitoring
+│   ├── ClipAccessibilityService.kt  # AccessibilityService for clipboard change events
+│   └── BootReceiver.kt             # BroadcastReceiver for auto-start on boot
+└── ui/
+    ├── LoginScreen.kt               # Compose login screen
+    ├── MainScreen.kt                # Compose main dashboard (status, devices, settings)
+    └── theme/
+        └── Theme.kt                 # Material 3 color scheme & typography
+```
+
+## 🚀 Build
+
+**Prerequisites:**
+- Android Studio (latest stable)
+- JDK 17
+- Android SDK with API 29+ installed
+
+### Steps
+
+1. Open the `ClipSyncAndroid` directory in Android Studio.
+2. Let Gradle sync complete.
+3. Build the debug APK:
+
+```bash
+./gradlew assembleDebug
+```
+
+The APK is output to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## 📖 Usage
+
+### Login
+
+1. Launch the app and enter:
+   - **Server URL** — e.g. `https://clip.yourdomain.com`
+   - **Username** and **Password**
+2. Tap **Login**. On success, the main screen appears.
+
+### Permissions Setup
+
+After login, the app guides you to enable:
+
+| Permission | Why | How |
+|---|---|---|
+| **Accessibility Service** | Monitor clipboard changes in background on Android 10+ | System Settings → Accessibility → ClipSync → Enable |
+| **Battery Optimization** | Prevent OS from killing the sync service | In-app one-click button |
+| **Notification** | Display foreground service status | Android 13+ auto-prompts |
+| **Auto-start** | Start on boot | Some OEMs require manual allowlist in settings |
+
+### Main Screen
+
+- **Connection Status** — Green/red indicator for WebSocket state.
+- **Sync Mode** — Switch between bidirectional, upload-only, download-only, and off.
+- **Device Name** — Tap to rename (reconnects automatically).
+- **Logout** — Stops service, clears auth, returns to login.
+
+### Background Behavior
+
+The service runs as an Android **Foreground Service** with a persistent notification. It:
+- Maintains the WebSocket connection.
+- Detects local clipboard changes via AccessibilityService.
+- Writes incoming remote clipboard content locally.
+- Auto-reconnects on network changes.
+
+## 📄 License
 
 MIT

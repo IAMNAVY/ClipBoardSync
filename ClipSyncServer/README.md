@@ -1,76 +1,141 @@
-# ClipSync Server - 跨设备剪贴板实时同步服务端
+# ClipSync Server
 
-一个基于 Go 语言编写的轻量级、高性能剪贴板同步服务。作为 ClipSync 系统的服务端组件，专为 1GB 内存 VPS 优化，支持实时 WebSocket 广播、JWT 认证和 SQLite 历史存储。
+> The self-hosted backend for the ClipSync ecosystem — lightweight, real-time, all-in-one.
 
-> 💡 **提示**: 桌面客户端代码请前往 `../ClipSyncClient` 目录获取。
+[中文文档](./README_CN.md)
 
-## 🌟 核心特性
+---
 
-- **极致轻量**：空载内存占用 < 30MB，非常适合低端 VPS。
-- **模块化代码**：代码结构清晰，将路由、WebSocket、数据库、认证和嵌入式前端解耦。
-- **实时同步**：基于 WebSocket 的 Pub/Sub 机制，剪贴板内容在秒级内推送到所有连接设备。
-- **安全保障**：使用 JWT 进行身份验证，密码经过 Bcrypt 加密存储。
-- **历史记录**：支持每个用户最多 50 条剪贴板历史，采用 FIFO（先进先出）自动清理机制。
-- **开箱即用**：前后端完全集成在单个二进制文件中，包含一个现代感的响应式深色主题 Web 界面。
-- **Docker 支持**：提供多阶段构建的 Docker 镜像，体积更小。
+## 🌟 Features
 
-## 🛠️ 技术栈
+- **Ultra-lightweight** — Idle memory < 30 MB; runs comfortably on a 1 GB VPS.
+- **Single Binary** — Frontend (responsive dark-theme Web UI) and backend are compiled into one executable.
+- **Real-time Sync** — WebSocket Pub/Sub hub broadcasts clipboard content to all connected devices within milliseconds.
+- **Secure Auth** — Stateless JWT tokens, Bcrypt password hashing, per-user data isolation.
+- **History Retention** — Stores the latest 50 clipboard entries per user with automatic FIFO pruning.
+- **Device Management** — View online devices in real-time; remote rename or force-disconnect from the Web dashboard.
+- **Admin Panel** — First registered user becomes admin. Manage users, toggle registration, and reset passwords via API.
+- **Docker Ready** — Multi-stage Dockerfile for minimal container images.
 
-- **后端**: Go (1.23+), Gin (Web 框架), GORM (SQLite ORM)
-- **认证**: JWT (JSON Web Token)
-- **通讯**: Gorilla WebSocket
-- **数据库**: SQLite 3 (WAL 模式优化)
-- **前端**: 原生 HTML/JS/CSS (嵌入在 Go 二进制中)
+## 🛠️ Tech Stack
 
-## 🚀 快速开始
+| Layer | Technology |
+|---|---|
+| Web Framework | [Gin](https://github.com/gin-gonic/gin) |
+| ORM | [GORM](https://gorm.io/) + SQLite 3 (WAL mode) |
+| WebSocket | [Gorilla WebSocket](https://github.com/gorilla/websocket) |
+| Auth | JWT (HS256) + Bcrypt |
+| Frontend | Vanilla HTML / CSS / JS (embedded via Go string literal) |
 
-### 方式 1：使用 Docker (推荐)
+## 📁 Source Files
+
+| File | Responsibility |
+|---|---|
+| `main.go` | Entry point, route registration, Gin configuration |
+| `handlers.go` | REST API handlers (register, login, clipboard CRUD, device management, password change) |
+| `websocket.go` | WebSocket upgrade, Hub (register/unregister/broadcast), ping/pong keep-alive |
+| `auth.go` | JWT generation, parsing, middleware |
+| `database.go` | GORM + SQLite initialization, history limit enforcement |
+| `admin.go` | Admin-only routes: list users, delete users, reset passwords, system config |
+| `models.go` | Data models (`User`, `ClipEntry`, `SystemSetting`) and request DTOs |
+| `frontend.go` | Embedded HTML/CSS/JS for the Web dashboard |
+| `Dockerfile` | Multi-stage build (golang → alpine) |
+
+## 🚀 Quick Start
+
+### Docker (Recommended)
 
 ```bash
-# 构建镜像
 docker build -t clipsync-server .
 
-# 运行容器
 docker run -d \
   --name clipsync-server \
   -p 8080:8080 \
   -v clipsync-data:/app/data \
-  -e JWT_SECRET="你的强随机密钥" \
+  -e JWT_SECRET="your-strong-secret-key" \
   clipsync-server
 ```
 
-### 方式 2：本地编译运行
+### Native Build
 
-1. **环境准备**：安装 Go 1.23+ 和 C 编译器（用于 SQLite CGO）。
-2. **下载依赖**：
-   ```bash
-   go mod tidy
-   ```
-3. **编译并运行**：
-   ```bash
-   go build -o clipsyncd .
-   ./clipsyncd
-   ```
+**Prerequisites:** Go 1.23+, C compiler (for SQLite CGO, e.g. GCC on Linux, TDM-GCC on Windows).
 
-## ⚙️ 环境变量
+```bash
+go mod tidy
+CGO_ENABLED=1 go build -o clipsyncd .
+./clipsyncd
+```
 
-| 变量名 | 默认值 | 说明 |
+## ⚙️ Environment Variables
+
+| Variable | Default | Description |
 |---|---|---|
-| `JWT_SECRET` | `clipboard-sync-secret-key-change-me` | JWT 签名密钥（生产环境务必更改） |
-| `LISTEN_ADDR` | `:8080` | 服务监听地址 |
-| `DB_PATH` | `./data/clip.db` | SQLite 数据库文件路径 |
+| `JWT_SECRET` | `clipboard-sync-secret-key-change-me` | JWT signing key (**must change in production**) |
+| `LISTEN_ADDR` | `:8080` | Listen address (`:8080` = all interfaces, port 8080) |
+| `DB_PATH` | `./data/clip.db` | SQLite database file path |
 
-## 🧪 接口测试 (curl)
+## 📡 API Reference
 
-1. **注册**：
-   ```bash
-   curl -X POST http://localhost:8080/api/register -d '{"username":"test","password":"password123"}' -H "Content-Type: application/json"
-   ```
-2. **登录并获取 Token**：
-   ```bash
-   curl -X POST http://localhost:8080/api/login -d '{"username":"test","password":"password123"}' -H "Content-Type: application/json"
-   ```
+### Public
 
-## 📄 开源协议
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/register` | Register a new user |
+| `POST` | `/api/login` | Login, returns JWT token |
+| `GET` | `/api/config` | Public config (e.g. is registration allowed) |
+| `GET` | `/ws?token=...&device_name=...` | WebSocket connection |
+
+### Authenticated (Bearer Token)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/clipboard` | Push a clipboard entry |
+| `GET` | `/api/clipboard` | Get clipboard history (latest 50) |
+| `DELETE` | `/api/clipboard/:id` | Delete a clipboard entry |
+| `DELETE` | `/api/clipboard/all` | Clear all history |
+| `GET` | `/api/devices` | List connected devices |
+| `PUT` | `/api/devices/:id/rename` | Rename a device |
+| `DELETE` | `/api/devices/:id` | Force-disconnect a device |
+| `PUT` | `/api/user/password` | Change password |
+
+### Admin (Requires admin role)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/admin/users` | List all users |
+| `DELETE` | `/api/admin/users/:id` | Delete a user |
+| `PUT` | `/api/admin/users/:id/password` | Reset user password |
+| `PUT` | `/api/admin/config` | Update system config (e.g. registration toggle) |
+
+## 🧪 Testing (curl)
+
+```bash
+# Register
+curl -X POST http://localhost:8080/api/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"test","password":"password123"}'
+
+# Login
+curl -X POST http://localhost:8080/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"test","password":"password123"}'
+
+# Push clipboard (replace <TOKEN>)
+curl -X POST http://localhost:8080/api/clipboard \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -d '{"content":"Hello from curl!","device_name":"Terminal"}'
+
+# Get history
+curl -H "Authorization: Bearer <TOKEN>" \
+  http://localhost:8080/api/clipboard
+```
+
+## 🐳 Deployment
+
+- **Production** (Cloudflare Tunnel + Docker Compose): see [`deploy.md`](./deploy.md)
+- **Production（中文）**: 见 [`deploy_CN.md`](./deploy_CN.md)
+
+## 📄 License
 
 MIT
