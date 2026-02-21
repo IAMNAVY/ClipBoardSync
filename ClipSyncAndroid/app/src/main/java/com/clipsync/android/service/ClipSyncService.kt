@@ -5,9 +5,12 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import com.clipsync.android.MainActivity
 import com.clipsync.android.R
@@ -30,7 +33,6 @@ class ClipSyncService : Service() {
         private const val CHANNEL_ID = "clipsync_service"
         private const val NOTIFICATION_ID = 1
 
-        // Static reference for accessibility service to push clipboard changes
         @Volatile
         var instance: ClipSyncService? = null
 
@@ -51,6 +53,13 @@ class ClipSyncService : Service() {
         private set
     private var wsClient: WsClient? = null
     private var currentConfig: AppConfig = AppConfig()
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    // Clipboard listener for background monitoring
+    private var clipboardManager: ClipboardManager? = null
+    private val clipChangedListener = ClipboardManager.OnPrimaryClipChangedListener {
+        handleClipboardChange()
+    }
 
     @Volatile
     var isConnected: Boolean = false
@@ -70,6 +79,11 @@ class ClipSyncService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification("正在连接..."))
         Log.d(TAG, "Service created")
 
+        // Register clipboard change listener on main thread
+        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboardManager?.addPrimaryClipChangedListener(clipChangedListener)
+        Log.d(TAG, "Clipboard listener registered")
+
         scope.launch {
             val config = prefs.configFlow.first()
             currentConfig = config
@@ -87,11 +101,34 @@ class ClipSyncService : Service() {
 
     override fun onDestroy() {
         instance = null
+        // Unregister clipboard listener
+        clipboardManager?.removePrimaryClipChangedListener(clipChangedListener)
+        clipboardManager = null
+        Log.d(TAG, "Clipboard listener unregistered")
+
         wsClient?.stop()
         wsClient = null
         scope.cancel()
         Log.d(TAG, "Service destroyed")
         super.onDestroy()
+    }
+
+    /**
+     * Called when system clipboard changes (via OnPrimaryClipChangedListener).
+     * This fires reliably even when the app is in the background.
+     */
+    private fun handleClipboardChange() {
+        try {
+            val content = clipboardHelper.readClipboard()
+            if (content.isNullOrBlank()) return
+
+            if (clipboardHelper.shouldUpload(content)) {
+                Log.d(TAG, "Clipboard changed in background (${content.length} chars), uploading...")
+                onClipboardChanged(content)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling clipboard change: ${e.message}")
+        }
     }
 
     private fun startWebSocket(config: AppConfig) {
@@ -129,7 +166,8 @@ class ClipSyncService : Service() {
     }
 
     /**
-     * Called by the accessibility service when a clipboard change is detected.
+     * Upload clipboard content to server.
+     * Called by clipboard listener or accessibility service.
      */
     fun onClipboardChanged(content: String) {
         if (!clipboardHelper.shouldUpload(content)) return

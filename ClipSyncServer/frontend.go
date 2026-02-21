@@ -144,12 +144,42 @@ const indexHTML = `<!DOCTYPE html>
 
   @media (max-width: 768px) {
     .app-container { flex-direction: column; }
-    .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 16px; flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 16px; }
+    .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 12px 16px; flex-direction: column; justify-content: flex-start; align-items: stretch; gap: 0; overflow: hidden; }
     .main-content { padding: 20px 16px; }
+    .sidebar-header { display: flex !important; align-items: center; justify-content: space-between; }
     .sidebar-logo { margin-bottom: 0 !important; }
-    .sidebar-user { margin-top: 0 !important; }
-    .sidebar-nav { display: flex; flex-direction: row; gap: 8px; justify-content: center; }
+    .sidebar-user { margin-top: 0 !important; padding: 12px 14px; }
+    .sidebar-nav { display: flex; flex-direction: row; gap: 8px; justify-content: center; flex-wrap: wrap; padding: 12px 0 4px 0; }
+    .sidebar-collapsible { display: none; }
+    .sidebar.expanded .sidebar-collapsible { display: block; }
+    #sidebar-logo-desktop { display: none !important; }
   }
+  .sidebar-header { display: none; }
+  .sidebar-toggle {
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--text); width: 36px; height: 36px; cursor: pointer;
+    transition: all 0.2s;
+  }
+  .sidebar-toggle:hover { background: var(--surface-hover); }
+
+  /* Pagination */
+  .pagination {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 16px 20px; border-top: 1px solid var(--border);
+  }
+  .pagination button {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); color: var(--text); font-size: 0.85em; font-weight: 500;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .pagination button:hover:not(:disabled) { background: var(--surface-hover); }
+  .pagination button:disabled { opacity: 0.4; cursor: default; }
+  .pagination span { font-size: 0.85em; color: var(--text-dim); }
+
+  /* Bottom spacing for clip list */
+  .content-wrapper { padding-bottom: 32px; }
 
   .sidebar-logo {
     display: flex;
@@ -388,11 +418,21 @@ const indexHTML = `<!DOCTYPE html>
   <!-- Main View -->
   <div id="main-section" class="app-container hidden">
     <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="sidebar-logo">
+    <aside class="sidebar" id="main-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo" style="margin-bottom:0;">
+          <div class="sidebar-logo-icon">CS</div>
+          <div class="sidebar-logo-text">ClipSync</div>
+        </div>
+        <button class="sidebar-toggle" onclick="toggleSidebar()" id="sidebar-toggle-btn">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+        </button>
+      </div>
+      <div class="sidebar-logo" id="sidebar-logo-desktop">
         <div class="sidebar-logo-icon">CS</div>
         <div class="sidebar-logo-text">ClipSync</div>
       </div>
+      <div class="sidebar-collapsible">
       
       <div class="sidebar-nav">
         <!-- User items -->
@@ -430,6 +470,7 @@ const indexHTML = `<!DOCTYPE html>
           </button>
         </div>
       </div>
+      </div><!-- end sidebar-collapsible -->
     </aside>
 
     <!-- Content -->
@@ -462,10 +503,11 @@ const indexHTML = `<!DOCTYPE html>
             </div>
           </div>
 
-          <div class="card">
+          <div class="card" style="margin-bottom: 24px;">
             <div id="clip-list">
               <!-- Inject clips here -->
             </div>
+            <div id="clip-pagination" class="pagination hidden"></div>
           </div>
         </div>
 
@@ -536,6 +578,9 @@ let ws = null;
 let intentionalClose = false;
 let currentDevices = [];
 let currentDeviceID = null;
+let allClipEntries = [];
+let clipPage = 1;
+const CLIPS_PER_PAGE = 10;
 let currentDeviceName = 'Web 浏览器';
 let pwdContext = { type: 'self', targetId: null };
 
@@ -675,6 +720,15 @@ function switchView(view) {
   if (view === 'devices') loadDevices();
   if (view === 'users') loadUsers();
   if (view === 'settings') loadSettings();
+
+  // Auto-collapse sidebar on mobile
+  const sidebar = document.getElementById('main-sidebar');
+  if (window.innerWidth <= 768 && sidebar) sidebar.classList.remove('expanded');
+}
+
+function toggleSidebar() {
+  const sidebar = document.getElementById('main-sidebar');
+  sidebar.classList.toggle('expanded');
 }
 
 function toggleExpandInput() {
@@ -745,22 +799,30 @@ function closeIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M1
 async function loadHistory() {
   try {
     const data = await apiFetch('/api/clipboard');
-    renderClips(data.entries || []);
+    allClipEntries = data.entries || [];
+    clipPage = 1;
+    renderClipsPage();
   } catch (e) {
     showToast('加载历史失败: ' + e.message, 'error');
   }
 }
 
-function renderClips(entries) {
+function renderClipsPage() {
   const list = document.getElementById('clip-list');
-  if (!entries.length) {
+  const pag = document.getElementById('clip-pagination');
+  if (!allClipEntries.length) {
     list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-dim);">暂无剪贴板记录</div>';
+    pag.classList.add('hidden');
     return;
   }
-  
+
+  const totalPages = Math.ceil(allClipEntries.length / CLIPS_PER_PAGE);
+  if (clipPage > totalPages) clipPage = totalPages;
+  const start = (clipPage - 1) * CLIPS_PER_PAGE;
+  const pageEntries = allClipEntries.slice(start, start + CLIPS_PER_PAGE);
+
   list.innerHTML = '';
-  entries.forEach(e => {
-    // Relative time approx
+  pageEntries.forEach(e => {
     const d = new Date(e.created_at);
     const timeStr = d.toLocaleTimeString('zh-CN', {hour: '2-digit', minute:'2-digit'});
     const dateStr = d.toLocaleDateString('zh-CN', {month: 'short', day: 'numeric'});
@@ -768,13 +830,11 @@ function renderClips(entries) {
     const div = document.createElement('div');
     div.className = 'clip-item';
     
-    // Header
     const meta = document.createElement('div');
     meta.className = 'clip-meta';
     const source = e.device_name ? ' · 来自 ' + escapeHtml(e.device_name) : '';
     meta.innerHTML = '<span>' + dateStr + ' ' + timeStr + source + '</span>';
     
-    // Actions
     const actions = document.createElement('div');
     actions.className = 'clip-actions';
     
@@ -792,15 +852,31 @@ function renderClips(entries) {
     actions.appendChild(delBtn);
     meta.appendChild(actions);
 
-    // Content
     const content = document.createElement('div');
     content.className = 'clip-content';
-    content.textContent = e.content; // textContent escapes HTML safely
+    content.textContent = e.content;
 
     div.appendChild(content);
     div.appendChild(meta);
     list.appendChild(div);
   });
+
+  // Pagination controls
+  if (totalPages > 1) {
+    pag.classList.remove('hidden');
+    pag.innerHTML = '<button ' + (clipPage <= 1 ? 'disabled' : '') + ' onclick="goClipPage(' + (clipPage - 1) + ')">上一页</button>'
+      + '<span>' + clipPage + ' / ' + totalPages + '</span>'
+      + '<button ' + (clipPage >= totalPages ? 'disabled' : '') + ' onclick="goClipPage(' + (clipPage + 1) + ')">下一页</button>';
+  } else {
+    pag.classList.add('hidden');
+  }
+}
+
+function goClipPage(page) {
+  clipPage = page;
+  renderClipsPage();
+  // Scroll to top of clip list
+  document.querySelector('.main-content').scrollTop = 0;
 }
 
 async function pushClip() {

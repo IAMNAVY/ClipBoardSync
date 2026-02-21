@@ -60,8 +60,12 @@ object ApiClient {
         serverUrl: String, token: String, content: String, deviceName: String
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val body = """{"content":${json.encodeToString(kotlinx.serialization.builtins.serializer<String>(), content)},"device_name":"$deviceName"}"""
-                .toRequestBody(jsonMediaType)
+            val jsonBody = kotlinx.serialization.json.buildJsonObject {
+                put("content", kotlinx.serialization.json.JsonPrimitive(content))
+                put("device_name", kotlinx.serialization.json.JsonPrimitive(deviceName))
+            }.toString()
+
+            val body = jsonBody.toRequestBody(jsonMediaType)
 
             val request = Request.Builder()
                 .url("${serverUrl.trimEnd('/')}/api/clipboard")
