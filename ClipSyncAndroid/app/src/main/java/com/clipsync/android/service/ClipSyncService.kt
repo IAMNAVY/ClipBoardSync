@@ -134,12 +134,7 @@ class ClipSyncService : Service() {
 
         if (LogcatClipboardMonitor.hasReadLogsPermission(this)) {
             Log.d(TAG, "READ_LOGS permission available, starting logcat monitor")
-            logcatMonitor = LogcatClipboardMonitor(this) { content ->
-                if (clipboardHelper.shouldUpload(content)) {
-                    Log.d(TAG, "Logcat monitor detected change (${content.length} chars)")
-                    onClipboardChanged(content)
-                }
-            }
+            logcatMonitor = LogcatClipboardMonitor(this)
             logcatMonitor?.start()
             isLogcatMonitorActive = true
             updateNotification(if (isConnected) "已连接（后台监控已激活）" else "已断开，重连中...")
@@ -154,6 +149,9 @@ class ClipSyncService : Service() {
      */
     private fun handleClipboardChange() {
         try {
+            // Check if upload is enabled
+            if (!currentConfig.shouldUpload) return
+
             val content = clipboardHelper.readClipboard()
             if (content.isNullOrBlank()) return
 
@@ -173,7 +171,11 @@ class ClipSyncService : Service() {
             token = config.token,
             deviceName = config.deviceName.ifBlank { android.os.Build.MODEL },
             onClip = { content ->
-                clipboardHelper.writeClipboard(content)
+                if (currentConfig.shouldDownload) {
+                    clipboardHelper.writeClipboard(content)
+                } else {
+                    Log.d(TAG, "Download disabled, ignoring remote clipboard")
+                }
             },
             onStatusChange = { connected ->
                 isConnected = connected
@@ -209,6 +211,10 @@ class ClipSyncService : Service() {
         scope.launch {
             val config = prefs.configFlow.first()
             if (!config.isLoggedIn) return@launch
+            if (!config.shouldUpload) {
+                Log.d(TAG, "Upload disabled, skipping clipboard upload")
+                return@launch
+            }
 
             val deviceName = config.deviceName.ifBlank { android.os.Build.MODEL }
             val result = ApiClient.pushClipboard(config.serverUrl, config.token, content, deviceName)
@@ -218,6 +224,16 @@ class ClipSyncService : Service() {
             } else {
                 Log.e(TAG, "Clipboard upload failed: ${result.exceptionOrNull()?.message}")
             }
+        }
+    }
+
+    /**
+     * Called when sync mode is changed from UI. Refreshes currentConfig.
+     */
+    fun refreshConfig() {
+        scope.launch {
+            currentConfig = prefs.configFlow.first()
+            Log.d(TAG, "Config refreshed, syncMode: ${currentConfig.syncModeEnum}")
         }
     }
 

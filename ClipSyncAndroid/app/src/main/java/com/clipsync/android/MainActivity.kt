@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import com.clipsync.android.data.AppConfig
 import com.clipsync.android.data.PrefsManager
+import com.clipsync.android.data.SyncMode
 import com.clipsync.android.service.ClipSyncService
 import com.clipsync.android.ui.LoginScreen
 import com.clipsync.android.ui.MainScreen
@@ -57,7 +58,8 @@ class MainActivity : ComponentActivity() {
                         config = config,
                         isConnected = isConnected,
                         onLogout = { handleLogout() },
-                        onRenameDevice = { newName -> handleRenameDevice(newName) }
+                        onRenameDevice = { newName -> handleRenameDevice(newName) },
+                        onSyncModeChanged = { mode -> handleSyncModeChanged(mode) }
                     )
                 } else {
                     LoginScreen(
@@ -154,5 +156,20 @@ class MainActivity : ComponentActivity() {
             service.reconnect()
         }
         Toast.makeText(this, "设备名已更新为: $newName（重连生效）", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun handleSyncModeChanged(mode: SyncMode) {
+        CoroutineScope(Dispatchers.IO).launch {
+            prefs.updateSyncMode(mode)
+            // Refresh service config AFTER save completes
+            ClipSyncService.instance?.refreshConfig()
+        }
+        val label = when (mode) {
+            SyncMode.BIDIRECTIONAL -> "手机 ↔ 云端"
+            SyncMode.UPLOAD_ONLY -> "手机 → 云端"
+            SyncMode.DOWNLOAD_ONLY -> "云端 → 手机"
+            SyncMode.OFF -> "已关闭"
+        }
+        Toast.makeText(this, "同步方向: $label", Toast.LENGTH_SHORT).show()
     }
 }

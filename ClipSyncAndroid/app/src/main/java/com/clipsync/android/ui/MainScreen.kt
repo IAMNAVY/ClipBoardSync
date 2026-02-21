@@ -53,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.clipsync.android.data.AppConfig
+import com.clipsync.android.data.SyncMode
 import com.clipsync.android.service.ClipAccessibilityService
 
 @Composable
@@ -60,7 +61,8 @@ fun MainScreen(
     config: AppConfig,
     isConnected: Boolean,
     onLogout: () -> Unit,
-    onRenameDevice: (String) -> Unit
+    onRenameDevice: (String) -> Unit,
+    onSyncModeChanged: (SyncMode) -> Unit
 ) {
     val context = LocalContext.current
     var showRenameDialog by remember { mutableStateOf(false) }
@@ -68,6 +70,7 @@ fun MainScreen(
 
     val isAccessibilityEnabled = ClipAccessibilityService.isRunning
     val isBatteryOptimized = !isIgnoringBatteryOptimization(context)
+    var currentSyncMode by remember { mutableStateOf(config.syncModeEnum) }
 
     Column(
         modifier = Modifier
@@ -95,6 +98,57 @@ fun MainScreen(
             subtitle = config.serverUrl,
             isGood = isConnected
         )
+
+        // Sync Mode Selector
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("同步方向", fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                val modes = listOf(
+                    SyncMode.BIDIRECTIONAL to "手机 ↔ 云端",
+                    SyncMode.UPLOAD_ONLY to "手机 → 云端",
+                    SyncMode.DOWNLOAD_ONLY to "云端 → 手机",
+                    SyncMode.OFF to "关闭同步"
+                )
+
+                val modeDescriptions = mapOf(
+                    SyncMode.BIDIRECTIONAL to "双向同步剪贴板",
+                    SyncMode.UPLOAD_ONLY to "仅上传本地剪贴板到云端",
+                    SyncMode.DOWNLOAD_ONLY to "仅接收云端剪贴板",
+                    SyncMode.OFF to "暂停所有同步"
+                )
+
+                modes.forEach { (mode, label) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.RadioButton(
+                            selected = currentSyncMode == mode,
+                            onClick = {
+                                currentSyncMode = mode
+                                onSyncModeChanged(mode)
+                            }
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Text(label, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                modeDescriptions[mode] ?: "",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurface.copy(0.5f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
 
         // Account Card
         Card(

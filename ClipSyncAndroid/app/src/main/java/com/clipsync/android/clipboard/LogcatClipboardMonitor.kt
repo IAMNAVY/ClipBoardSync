@@ -1,9 +1,7 @@
 package com.clipsync.android.clipboard
 
-import android.content.ClipboardManager
-import android.content.Context
 import android.content.pm.PackageManager
-import android.os.Build
+import android.content.Context
 import android.util.Log
 import androidx.core.content.ContextCompat
 import java.io.BufferedReader
@@ -16,14 +14,15 @@ import java.util.Locale
  * Monitors system logcat for clipboard change events.
  * Requires READ_LOGS permission (granted via ADB).
  *
- * Based on ClipCascade's approach:
- * - Watch logcat for ClipboardService entries containing our package name
- * - When detected, launch ClipboardFloatingActivity to get foreground status
- * - The activity reads clipboard and triggers the callback
+ * How it works (same as ClipCascade):
+ * 1. The standard OnPrimaryClipChangedListener fires when clipboard changes
+ * 2. If the app is in background, reading clipboard data fails
+ * 3. ClipboardService logs an ERROR mentioning our package name
+ * 4. We detect this error in logcat
+ * 5. We launch ClipboardFloatingActivity to gain foreground focus and read clipboard
  */
 class LogcatClipboardMonitor(
-    private val context: Context,
-    private val onClipboardChanged: (String) -> Unit
+    private val context: Context
 ) {
     companion object {
         private const val TAG = "LogcatClipMonitor"
@@ -64,18 +63,18 @@ class LogcatClipboardMonitor(
                 reader.use { br ->
                     var line: String? = null
                     while (!stopLogcat && br.readLine().also { line = it } != null) {
+                        // ClipboardService logs an error containing our package name
+                        // when we try to read clipboard from background and fail.
+                        // This is our signal that clipboard changed.
                         if (line!!.contains(context.packageName)) {
-                            // Clipboard change from our own app — skip
-                            continue
-                        }
-                        // Clipboard change from another app detected
-                        val currentTime = System.currentTimeMillis()
-                        if (currentTime - lastActivityStartTime > activityDebounceTime) {
-                            lastActivityStartTime = currentTime
-                            Log.d(TAG, "Clipboard change detected, launching floating activity")
-                            context.startActivity(
-                                ClipboardFloatingActivity.getIntent(context)
-                            )
+                            val currentTime = System.currentTimeMillis()
+                            if (currentTime - lastActivityStartTime > activityDebounceTime) {
+                                lastActivityStartTime = currentTime
+                                Log.d(TAG, "Clipboard error detected for our app, launching floating activity")
+                                context.startActivity(
+                                    ClipboardFloatingActivity.getIntent(context)
+                                )
+                            }
                         }
                     }
                 }
