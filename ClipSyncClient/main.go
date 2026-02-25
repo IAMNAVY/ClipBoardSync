@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 )
 
 var (
@@ -53,6 +54,27 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Handle out-of-process clipboard panel
+	if len(os.Args) > 1 && os.Args[1] == "--clipboard-ui" {
+		cfg, _ := LoadConfig()
+		if cfg == nil || cfg.Token == "" {
+			log.Println("[clipboard-ui] 未登录")
+			os.Exit(1)
+		}
+		RunClipboardPanel(cfg)
+		os.Exit(0)
+	}
+
+	// Handle out-of-process hotkey config GUI
+	if len(os.Args) > 1 && os.Args[1] == "--hotkey-ui" {
+		currentHotkey := "ctrl+shift+v"
+		if len(os.Args) > 2 {
+			currentHotkey = os.Args[2]
+		}
+		RunHotkeyConfigUI(currentHotkey)
+		os.Exit(0)
+	}
+
 	log.Println("========================================")
 	log.Println("ClipSyncClient 启动")
 	log.Println("========================================")
@@ -79,6 +101,9 @@ func main() {
 	// Start sync services
 	startSyncServices()
 
+	// Register global hotkey
+	go registerAndListenHotkey()
+
 	// Start system tray (this blocks)
 	devName := GetDeviceName(appConfig)
 	UpdateTrayDeviceName(devName)
@@ -90,6 +115,8 @@ func main() {
 		onSyncModeChanged: handleSyncModeChanged,
 		onReconnect:       handleReconnect,
 		onQuit:            handleQuit,
+		onOpenClipboard:   handleOpenClipboard,
+		onConfigHotkey:    handleConfigHotkey,
 	})
 }
 
@@ -392,4 +419,106 @@ func setupLogging() {
 	}
 	log.SetOutput(logFile)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+}
+
+// registerAndListenHotkey registers the global hotkey and starts listening.
+func registerAndListenHotkey() {
+	configLock.Lock()
+	hotkeyStr := appConfig.Hotkey
+	configLock.Unlock()
+
+	if hotkeyStr == "" {
+		hotkeyStr = "ctrl+shift+v"
+	}
+
+	mod, vk, _ := ParseHotkey(hotkeyStr)
+	if vk == 0 {
+		log.Printf("[hotkey] 无效的快捷键配置: %s, 使用默认 Ctrl+Shift+V", hotkeyStr)
+		mod = modCtrl | modShift
+		vk = 0x56 // 'V'
+	}
+
+	if !RegisterGlobalHotkey(mod, vk) {
+		log.Printf("[hotkey] 注册全局快捷键失败 (%s)，可能被其他程序占用", FormatHotkey(mod, vk))
+		return
+	}
+
+	log.Printf("[hotkey] 全局快捷键已注册: %s", FormatHotkey(mod, vk))
+
+	ListenHotkey(func() {
+		go handleOpenClipboard()
+	})
+}
+
+// handleOpenClipboard spawns the clipboard panel as a child process.
+func handleOpenClipboard() {
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Printf("[main] 获取可执行文件路径失败: %v", err)
+		return
+	}
+
+	cmd := exec.Command(exePath, "--clipboard-ui")
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[main] 剪贴板面板异常退出: %v", err)
+		return
+	}
+
+	// Check if user selected an entry (stdout contains "PASTE:id")
+	outStr := strings.TrimSpace(string(output))
+	if strings.HasPrefix(outStr, "PASTE:") {
+		log.Println("[main] 用户选择了剪贴板条目，模拟粘贴")
+		// Small delay to let the panel window fully close
+		time.Sleep(100 * time.Millisecond)
+		SimulateCtrlV()
+	}
+}
+
+// handleConfigHotkey spawns the hotkey config GUI as a child process.
+func handleConfigHotkey() {
+	exePath, err := os.Executable()
+	if err != nil {
+		log.Printf("[main] 获取可执行文件路径失败: %v", err)
+		return
+	}
+
+	configLock.Lock()
+	currentHotkey := appConfig.Hotkey
+	configLock.Unlock()
+	if currentHotkey == "" {
+		currentHotkey = "ctrl+shift+v"
+	}
+
+	cmd := exec.Command(exePath, "--hotkey-ui", currentHotkey)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("[main] 快捷键配置异常退出: %v", err)
+		return
+	}
+
+	// Parse output for new hotkey
+	outStr := strings.TrimSpace(string(output))
+	for _, line := range strings.Split(outStr, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "HOTKEY:") {
+			newHotkey := strings.TrimPrefix(line, "HOTKEY:")
+			log.Printf("[main] 快捷键已更新: %s", newHotkey)
+
+			// Unregister old, register new
+			UnregisterGlobalHotkey()
+
+			configLock.Lock()
+			appConfig.Hotkey = newHotkey
+			configLock.Unlock()
+
+			if err := SaveConfig(appConfig); err != nil {
+				log.Printf("[main] 保存配置失败: %v", err)
+			}
+
+			// Re-register in a new goroutine
+			go registerAndListenHotkey()
+			break
+		}
+	}
 }

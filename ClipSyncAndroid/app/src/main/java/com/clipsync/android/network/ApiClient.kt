@@ -113,4 +113,77 @@ object ApiClient {
             Result.failure(Exception("上传剪贴板失败: ${e.message}"))
         }
     }
+
+    /**
+     * Fetches clipboard history with optional search/filter/pinned params.
+     */
+    suspend fun getClipboardHistory(
+        serverUrl: String, token: String,
+        search: String = "", category: String = "", pinned: Boolean = false
+    ): Result<ClipHistoryResponse> = withContext(Dispatchers.IO) {
+        try {
+            val params = mutableListOf<String>()
+            if (search.isNotBlank()) params.add("search=${java.net.URLEncoder.encode(search, "UTF-8")}")
+            if (pinned) params.add("pinned=true")
+            else if (category.isNotBlank()) params.add("category=$category")
+            val qs = if (params.isNotEmpty()) "?" + params.joinToString("&") else ""
+
+            val request = Request.Builder()
+                .url("${serverUrl.trimEnd('/')}/api/clipboard$qs")
+                .addHeader("Authorization", "Bearer $token")
+                .get()
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: ""
+
+            if (response.isSuccessful) {
+                val data = json.decodeFromString<ClipHistoryResponse>(responseBody)
+                Result.success(data)
+            } else {
+                Result.failure(Exception("获取失败: HTTP ${response.code}"))
+            }
+        } catch (e: Exception) {
+            Result.failure(Exception("获取剪贴板历史失败: ${e.message}"))
+        }
+    }
+
+    /**
+     * Toggles the pin/favorite status of a clipboard entry.
+     */
+    suspend fun togglePin(serverUrl: String, token: String, clipId: Int): Result<Unit> =
+        withContext(Dispatchers.IO) {
+            try {
+                val request = Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/clipboard/$clipId/pin")
+                    .addHeader("Authorization", "Bearer $token")
+                    .put("".toRequestBody(null))
+                    .build()
+
+                val response = client.newCall(request).execute()
+                if (response.isSuccessful) {
+                    Result.success(Unit)
+                } else {
+                    Result.failure(Exception("操作失败: HTTP ${response.code}"))
+                }
+            } catch (e: Exception) {
+                Result.failure(Exception("收藏操作失败: ${e.message}"))
+            }
+        }
 }
+
+@Serializable
+data class ClipEntry(
+    val id: Int = 0,
+    val content: String = "",
+    val category: String = "text",
+    val is_pinned: Boolean = false,
+    val device_name: String = "",
+    val created_at: String = ""
+)
+
+@Serializable
+data class ClipHistoryResponse(
+    val entries: List<ClipEntry> = emptyList(),
+    val count: Int = 0
+)

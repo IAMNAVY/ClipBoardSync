@@ -9,15 +9,30 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import com.clipsync.android.data.AppConfig
 import com.clipsync.android.data.PrefsManager
 import com.clipsync.android.data.SyncMode
 import com.clipsync.android.service.ClipSyncService
+import com.clipsync.android.ui.ClipboardHistoryScreen
 import com.clipsync.android.ui.LoginScreen
 import com.clipsync.android.ui.MainScreen
 import com.clipsync.android.ui.theme.ClipSyncTheme
@@ -58,15 +73,45 @@ class MainActivity : ComponentActivity() {
                 val config by prefs.configFlow.collectAsState(initial = AppConfig())
 
                 if (config.isLoggedIn) {
-                    MainScreen(
-                        config = config,
-                        isConnected = isConnected,
-                        connectionError = connectionError,
-                        onLogout = { handleLogout() },
-                        onRenameDevice = { newName -> handleRenameDevice(newName) },
-                        onSyncModeChanged = { mode -> handleSyncModeChanged(mode) },
-                        onReconnect = { handleReconnect() }
-                    )
+                    var selectedTab by remember { mutableStateOf(0) }
+
+                    Scaffold(
+                        bottomBar = {
+                            NavigationBar {
+                                NavigationBarItem(
+                                    selected = selectedTab == 0,
+                                    onClick = { selectedTab = 0 },
+                                    icon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
+                                    label = { Text("剪贴板") }
+                                )
+                                NavigationBarItem(
+                                    selected = selectedTab == 1,
+                                    onClick = { selectedTab = 1 },
+                                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                                    label = { Text("设置") }
+                                )
+                            }
+                        }
+                    ) { innerPadding ->
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(innerPadding)
+                        ) {
+                            when (selectedTab) {
+                                0 -> ClipboardHistoryScreen(config = config)
+                                1 -> MainScreen(
+                                    config = config,
+                                    isConnected = isConnected,
+                                    connectionError = connectionError,
+                                    onLogout = { handleLogout() },
+                                    onRenameDevice = { newName -> handleRenameDevice(newName) },
+                                    onSyncModeChanged = { mode -> handleSyncModeChanged(mode) },
+                                    onReconnect = { handleReconnect() }
+                                )
+                            }
+                        }
+                    }
                 } else {
                     LoginScreen(
                         onLoginSuccess = { serverUrl, username, password, token, refreshToken ->

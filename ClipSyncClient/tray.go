@@ -14,6 +14,8 @@ type trayCallbacks struct {
 	onSyncModeChanged func(string)
 	onReconnect       func()
 	onQuit            func()
+	onOpenClipboard   func()
+	onConfigHotkey    func()
 }
 
 var (
@@ -144,6 +146,14 @@ func onTrayReady() {
 
 	systray.AddSeparator()
 
+	// Clipboard panel
+	mClipboard := systray.AddMenuItem("📋 打开剪贴板 (Clipboard)", "打开云剪贴板面板")
+
+	// Hotkey config
+	mHotkeyConfig := systray.AddMenuItem("⌨ 配置快捷键 (Hotkey)", "修改全局快捷键")
+
+	systray.AddSeparator()
+
 	// Quit
 	mQuit := systray.AddMenuItem("退出 (Quit)", "退出程序")
 
@@ -182,6 +192,14 @@ func onTrayReady() {
 			case <-mReconfigure.ClickedCh:
 				if trayCbs != nil && trayCbs.onReconfigure != nil {
 					trayCbs.onReconfigure()
+				}
+			case <-mClipboard.ClickedCh:
+				if trayCbs != nil && trayCbs.onOpenClipboard != nil {
+					go trayCbs.onOpenClipboard()
+				}
+			case <-mHotkeyConfig.ClickedCh:
+				if trayCbs != nil && trayCbs.onConfigHotkey != nil {
+					go trayCbs.onConfigHotkey()
 				}
 			case <-mQuit.ClickedCh:
 				if trayCbs != nil && trayCbs.onQuit != nil {

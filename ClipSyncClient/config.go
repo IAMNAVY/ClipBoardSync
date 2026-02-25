@@ -26,6 +26,7 @@ type AppConfig struct {
 	AutoStart    bool   `json:"auto_start"`
 	DeviceName   string `json:"device_name"`
 	SyncMode     string `json:"sync_mode"`
+	Hotkey       string `json:"hotkey"` // global hotkey, e.g. "ctrl+shift+v"
 }
 
 // GetSyncMode returns the sync mode, defaulting to bidirectional.

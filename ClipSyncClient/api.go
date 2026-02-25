@@ -122,3 +122,86 @@ func PushClipboard(serverURL, token, content, deviceName string) error {
 	}
 	return nil
 }
+
+// ClipEntryAPI represents a clipboard entry from the server.
+type ClipEntryAPI struct {
+	ID         uint   `json:"id"`
+	Content    string `json:"content"`
+	Category   string `json:"category"`
+	IsPinned   bool   `json:"is_pinned"`
+	DeviceName string `json:"device_name"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// FetchClipboardHistory retrieves clipboard history with optional filters.
+func FetchClipboardHistory(serverURL, token, search, category string, pinned bool) ([]ClipEntryAPI, error) {
+	params := []string{}
+	if search != "" {
+		params = append(params, "search="+search)
+	}
+	if pinned {
+		params = append(params, "pinned=true")
+	} else if category != "" {
+		params = append(params, "category="+category)
+	}
+	qs := ""
+	if len(params) > 0 {
+		qs = "?" + joinStrings(params, "&")
+	}
+
+	req, err := http.NewRequest("GET", serverURL+"/api/clipboard"+qs, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		Entries []ClipEntryAPI `json:"entries"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, err
+	}
+	return result.Entries, nil
+}
+
+// TogglePin toggles the pin/favorite status of a clipboard entry.
+func TogglePin(serverURL, token string, clipID uint) error {
+	req, err := http.NewRequest("PUT", fmt.Sprintf("%s/api/clipboard/%d/pin", serverURL, clipID), nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
+func joinStrings(parts []string, sep string) string {
+	result := ""
+	for i, p := range parts {
+		if i > 0 {
+			result += sep
+		}
+		result += p
+	}
+	return result
+}
