@@ -329,6 +329,17 @@ const indexHTML = `<!DOCTYPE html>
   }
   .clip-item:last-child { border-bottom: none; }
   .clip-item:hover { background: var(--surface-hover); }
+  .clip-item.pinned { background: rgba(59,130,246,0.04); border-left: 3px solid var(--accent); }
+
+  .filter-btn {
+    padding: 4px 12px; border-radius: 99px; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text-dim); font-size: 0.8em;
+    cursor: pointer; transition: all 0.2s; white-space: nowrap;
+  }
+  .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  .btn-icon.pinned-active { color: #f59e0b; }
   
   .clip-content {
     font-size: 0.95em; line-height: 1.6;
@@ -526,6 +537,17 @@ const indexHTML = `<!DOCTYPE html>
             </div>
           </div>
 
+          <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
+            <input type="text" id="clip-search" placeholder="搜索剪贴板内容..." style="flex:1; min-width:200px; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); color:var(--text); font-size:0.9em;">
+            <div style="display:flex; gap:4px; flex-wrap:wrap;">
+              <button class="filter-btn active" data-filter="" onclick="setFilter('')">全部</button>
+              <button class="filter-btn" data-filter="text" onclick="setFilter('text')">📝 文本</button>
+              <button class="filter-btn" data-filter="url" onclick="setFilter('url')">🔗 链接</button>
+              <button class="filter-btn" data-filter="code" onclick="setFilter('code')">💻 代码</button>
+              <button class="filter-btn" data-filter="pinned" onclick="setFilter('pinned')">⭐ 收藏</button>
+            </div>
+          </div>
+
           <div class="card" style="margin-bottom: 40px;">
             <div id="clip-list">
               <!-- Inject clips here -->
@@ -574,6 +596,24 @@ const indexHTML = `<!DOCTYPE html>
               </div>
             </div>
           </div>
+
+          <div class="card" style="margin-top:16px;">
+            <div class="card-body">
+              <h3 style="font-size:1.1em; margin-bottom:4px;">历史保留策略</h3>
+              <p style="color:var(--text-dim); font-size:0.85em; margin-bottom:16px;">收藏（置顶）的内容不受保留策略影响，永不自动清理</p>
+              <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:flex-end;">
+                <div style="flex:1; min-width:160px;">
+                  <label style="display:block; font-size:0.85em; color:var(--text-dim); margin-bottom:4px;">保留条数 (0 = 不限)</label>
+                  <input type="number" id="retention-count" min="0" value="50" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); color:var(--text);">
+                </div>
+                <div style="flex:1; min-width:160px;">
+                  <label style="display:block; font-size:0.85em; color:var(--text-dim); margin-bottom:4px;">保留天数 (0 = 不限)</label>
+                  <input type="number" id="retention-days" min="0" value="0" style="width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); color:var(--text);">
+                </div>
+                <button class="btn btn-primary btn-small" onclick="saveRetention()">保存</button>
+              </div>
+            </div>
+          </div>
         </div>
 
       </div>
@@ -608,6 +648,8 @@ const CLIPS_PER_PAGE = 10;
 let currentDeviceName = 'Web 浏览器';
 let pwdContext = { type: 'self', targetId: null };
 let isRefreshing = false;
+let currentFilter = '';
+let searchTimer = null;
 
 // Init
 initApp();
@@ -868,7 +910,16 @@ function closeIcon() { return '<svg class="icon" viewBox="0 0 24 24"><path d="M1
 
 async function loadHistory() {
   try {
-    const data = await apiFetch('/api/clipboard');
+    let params = [];
+    const search = document.getElementById('clip-search')?.value?.trim();
+    if (search) params.push('search=' + encodeURIComponent(search));
+    if (currentFilter === 'pinned') {
+      params.push('pinned=true');
+    } else if (currentFilter) {
+      params.push('category=' + currentFilter);
+    }
+    const qs = params.length ? '?' + params.join('&') : '';
+    const data = await apiFetch('/api/clipboard' + qs);
     allClipEntries = data.entries || [];
     clipPage = 1;
     renderClipsPage();
@@ -876,6 +927,25 @@ async function loadHistory() {
     showToast('加载历史失败: ' + e.message, 'error');
   }
 }
+
+function setFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === f);
+  });
+  loadHistory();
+}
+
+// Debounced search
+document.addEventListener('DOMContentLoaded', () => {
+  const searchInput = document.getElementById('clip-search');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => loadHistory(), 400);
+    });
+  }
+});
 
 function renderClipsPage() {
   const list = document.getElementById('clip-list');
@@ -898,16 +968,23 @@ function renderClipsPage() {
     const dateStr = d.toLocaleDateString('zh-CN', {month: 'short', day: 'numeric'});
 
     const div = document.createElement('div');
-    div.className = 'clip-item';
+    div.className = 'clip-item' + (e.is_pinned ? ' pinned' : '');
     
     const meta = document.createElement('div');
     meta.className = 'clip-meta';
     const source = e.device_name ? ' · 来自 ' + escapeHtml(e.device_name) : '';
-    meta.innerHTML = '<span>' + dateStr + ' ' + timeStr + source + '</span>';
+    const catBadge = categoryBadge(e.category);
+    meta.innerHTML = '<span>' + catBadge + dateStr + ' ' + timeStr + source + '</span>';
     
     const actions = document.createElement('div');
     actions.className = 'clip-actions';
     
+    const pinBtn = document.createElement('button');
+    pinBtn.className = 'btn-icon' + (e.is_pinned ? ' pinned-active' : ''); pinBtn.title = e.is_pinned ? '取消收藏' : '收藏';
+    pinBtn.innerHTML = e.is_pinned ? '⭐' : '☆';
+    pinBtn.style.fontSize = '1.1em';
+    pinBtn.onclick = () => togglePin(e.id);
+
     const copyBtn = document.createElement('button');
     copyBtn.className = 'btn-icon'; copyBtn.title = '复制';
     copyBtn.innerHTML = copyIcon();
@@ -918,6 +995,7 @@ function renderClipsPage() {
     delBtn.innerHTML = trashIcon();
     delBtn.onclick = () => deleteClip(e.id);
     
+    actions.appendChild(pinBtn);
     actions.appendChild(copyBtn);
     actions.appendChild(delBtn);
     meta.appendChild(actions);
@@ -1240,13 +1318,18 @@ async function deleteUser(id, name) {
 }
 
 let registrationEnabled = false;
+let settingsRetentionCount = 50;
+let settingsRetentionDays = 0;
+
 async function loadSettings() {
   try {
     const data = await apiFetch('/api/config');
     registrationEnabled = data.allow_registration;
+    settingsRetentionCount = data.retention_count || 0;
+    settingsRetentionDays = data.retention_days || 0;
     renderSettings();
   } catch (e) {
-    showToast('获取设配失败', 'error');
+    showToast('获取设置失败', 'error');
   }
 }
 
@@ -1259,6 +1342,10 @@ function renderSettings() {
     btn.textContent = '已关闭 (点击开启)';
     btn.className = 'btn btn-outline';
   }
+  const rc = document.getElementById('retention-count');
+  const rd = document.getElementById('retention-days');
+  if (rc) rc.value = settingsRetentionCount;
+  if (rd) rd.value = settingsRetentionDays;
 }
 
 async function toggleRegistration() {
@@ -1266,13 +1353,43 @@ async function toggleRegistration() {
   try {
     await apiFetch('/api/admin/config', {
       method: 'PUT',
-      body: JSON.stringify({ allow_registration: nextState })
+      body: JSON.stringify({ allow_registration: nextState, retention_count: settingsRetentionCount, retention_days: settingsRetentionDays })
     });
     registrationEnabled = nextState;
     renderSettings();
     showToast('配置已更新');
   } catch(e) {
     showToast('更新失败: ' + e.message, 'error');
+  }
+}
+
+async function saveRetention() {
+  const rc = parseInt(document.getElementById('retention-count').value) || 0;
+  const rd = parseInt(document.getElementById('retention-days').value) || 0;
+  try {
+    await apiFetch('/api/admin/config', {
+      method: 'PUT',
+      body: JSON.stringify({ allow_registration: registrationEnabled, retention_count: rc, retention_days: rd })
+    });
+    settingsRetentionCount = rc;
+    settingsRetentionDays = rd;
+    showToast('保留策略已更新');
+  } catch(e) {
+    showToast('更新失败: ' + e.message, 'error');
+  }
+}
+
+function categoryBadge(cat) {
+  const badges = { url: '🔗 ', code: '💻 ', text: '📝 ' };
+  return '<span style="margin-right:4px;">' + (badges[cat] || '') + '</span>';
+}
+
+async function togglePin(id) {
+  try {
+    await apiFetch('/api/clipboard/' + id + '/pin', { method: 'PUT' });
+    loadHistory();
+  } catch(e) {
+    showToast('操作失败: ' + e.message, 'error');
   }
 }
 </script>

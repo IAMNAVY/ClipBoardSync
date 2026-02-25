@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -18,6 +19,8 @@ import (
 var (
 	dbPath            = getEnv("DB_PATH", "./data/clip.db")
 	allowRegistration = true // Memory cache for global setting
+	retentionCount    = 50   // Max entries per user (0 = unlimited)
+	retentionDays     = 0    // Max age in days (0 = unlimited)
 )
 
 func getEnv(key, fallback string) string {
@@ -60,13 +63,19 @@ func initDB() {
 	// Auto migrate
 	db.AutoMigrate(&User{}, &ClipEntry{}, &SystemSetting{})
 
-	// Initialize SystemSetting
-	var regSetting SystemSetting
-	if err := db.Where("key = ?", "AllowRegistration").First(&regSetting).Error; err != nil {
-		regSetting = SystemSetting{Key: "AllowRegistration", Value: "true"}
-		db.Create(&regSetting)
+	// Initialize SystemSettings
+	initSetting("AllowRegistration", "true")
+	initSetting("RetentionCount", "50")
+	initSetting("RetentionDays", "0")
+
+	// Load settings into memory
+	allowRegistration = (loadSetting("AllowRegistration") == "true")
+	if v, err := strconv.Atoi(loadSetting("RetentionCount")); err == nil {
+		retentionCount = v
 	}
-	allowRegistration = (regSetting.Value == "true")
+	if v, err := strconv.Atoi(loadSetting("RetentionDays")); err == nil {
+		retentionDays = v
+	}
 
 	// Initialize Admin
 	var adminUser User
@@ -81,23 +90,56 @@ func initDB() {
 	}
 }
 
+// initSetting creates a SystemSetting if it doesn't exist yet.
+func initSetting(key, defaultValue string) {
+	var s SystemSetting
+	if err := db.Where("key = ?", key).First(&s).Error; err != nil {
+		db.Create(&SystemSetting{Key: key, Value: defaultValue})
+	}
+}
+
+// loadSetting reads a SystemSetting value from DB.
+func loadSetting(key string) string {
+	var s SystemSetting
+	if err := db.Where("key = ?", key).First(&s).Error; err != nil {
+		return ""
+	}
+	return s.Value
+}
+
+// saveSetting writes a SystemSetting to DB.
+func saveSetting(key, value string) {
+	db.Model(&SystemSetting{}).Where("key = ?", key).Update("value", value)
+}
+
 // ============================================================================
-// FIFO enforcement — keep at most 50 entries per user
+// Retention enforcement
 // ============================================================================
 
+// enforceHistoryLimit cleans up old, unpinned entries based on retention policy.
+// Pinned entries are never deleted by this function.
 func enforceHistoryLimit(userID uint) {
-	var count int64
-	db.Model(&ClipEntry{}).Where("user_id = ?", userID).Count(&count)
-	if count > 50 {
-		// Find the oldest entry that should be removed
-		excess := count - 50
-		var oldest []ClipEntry
-		db.Where("user_id = ?", userID).
-			Order("created_at ASC").
-			Limit(int(excess)).
-			Find(&oldest)
-		for _, entry := range oldest {
-			db.Delete(&entry)
+	// Strategy 1: Enforce count limit (if configured)
+	if retentionCount > 0 {
+		var count int64
+		db.Model(&ClipEntry{}).Where("user_id = ? AND is_pinned = ?", userID, false).Count(&count)
+		if count > int64(retentionCount) {
+			excess := count - int64(retentionCount)
+			var oldest []ClipEntry
+			db.Where("user_id = ? AND is_pinned = ?", userID, false).
+				Order("created_at ASC").
+				Limit(int(excess)).
+				Find(&oldest)
+			for _, entry := range oldest {
+				db.Delete(&entry)
+			}
 		}
+	}
+
+	// Strategy 2: Enforce day limit (if configured)
+	if retentionDays > 0 {
+		cutoff := time.Now().AddDate(0, 0, -retentionDays)
+		db.Where("user_id = ? AND is_pinned = ? AND created_at < ?", userID, false, cutoff).
+			Delete(&ClipEntry{})
 	}
 }

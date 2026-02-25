@@ -52,6 +52,7 @@ func main() {
 		api.PUT("/devices/:id/rename", handleRenameDevice)
 		api.DELETE("/devices/:id", handleRemoveDevice)
 		api.PUT("/user/password", handleChangePassword) // New modify password route
+		api.PUT("/clipboard/:id/pin", handleTogglePin)  // Toggle pin/favorite
 	}
 
 	// Admin routes

@@ -129,9 +129,13 @@ func handlePushClip(c *gin.Context) {
 	if devName == "" {
 		devName = "Web 浏览器"
 	}
+
+	category := detectCategory(req.Content)
+
 	entry := ClipEntry{
 		UserID:     userID,
 		Content:    req.Content,
+		Category:   category,
 		DeviceName: devName,
 	}
 	if err := db.Create(&entry).Error; err != nil {
@@ -139,7 +143,7 @@ func handlePushClip(c *gin.Context) {
 		return
 	}
 
-	// Enforce FIFO limit
+	// Enforce retention limit
 	enforceHistoryLimit(userID)
 
 	// Broadcast to all connected devices of this user
@@ -147,23 +151,42 @@ func handlePushClip(c *gin.Context) {
 		"type":        "clip",
 		"content":     entry.Content,
 		"id":          entry.ID,
+		"category":    entry.Category,
+		"is_pinned":   entry.IsPinned,
 		"device_name": entry.DeviceName,
 		"created_at":  entry.CreatedAt,
 	}, nil)
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "clipboard pushed",
-		"id":      entry.ID,
+		"message":  "clipboard pushed",
+		"id":       entry.ID,
+		"category": entry.Category,
 	})
 }
 
 func handleGetHistory(c *gin.Context) {
 	userID := c.MustGet("user_id").(uint)
 
+	query := db.Where("user_id = ?", userID)
+
+	// Filter by search keyword
+	if search := c.Query("search"); search != "" {
+		query = query.Where("content LIKE ?", "%"+search+"%")
+	}
+
+	// Filter by category
+	if category := c.Query("category"); category != "" {
+		query = query.Where("category = ?", category)
+	}
+
+	// Filter pinned only
+	if c.Query("pinned") == "true" {
+		query = query.Where("is_pinned = ?", true)
+	}
+
 	var entries []ClipEntry
-	db.Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Limit(50).
+	query.Order("is_pinned DESC, created_at DESC").
+		Limit(200).
 		Find(&entries)
 
 	c.JSON(http.StatusOK, gin.H{
@@ -182,6 +205,32 @@ func handleDeleteClip(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+}
+
+// handleTogglePin toggles the is_pinned status of a clipboard entry.
+func handleTogglePin(c *gin.Context) {
+	userID := c.MustGet("user_id").(uint)
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	var entry ClipEntry
+	if db.Where("id = ? AND user_id = ?", id, userID).First(&entry).Error != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "entry not found"})
+		return
+	}
+
+	entry.IsPinned = !entry.IsPinned
+	db.Save(&entry)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":   "pin toggled",
+		"id":        entry.ID,
+		"is_pinned": entry.IsPinned,
+	})
 }
 
 func handleClearHistory(c *gin.Context) {

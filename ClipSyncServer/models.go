@@ -17,6 +17,8 @@ type ClipEntry struct {
 	ID         uint      `gorm:"primaryKey" json:"id"`
 	UserID     uint      `gorm:"index;not null" json:"user_id"`
 	Content    string    `gorm:"type:text;not null" json:"content"`
+	Category   string    `gorm:"size:16;default:'text'" json:"category"`
+	IsPinned   bool      `gorm:"default:false" json:"is_pinned"`
 	DeviceName string    `gorm:"size:128;default:''" json:"device_name"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -60,4 +62,6 @@ type AdminPasswordReset struct {
 
 type AdminConfigUpdate struct {
 	AllowRegistration bool `json:"allow_registration"`
+	RetentionCount    int  `json:"retention_count"`
+	RetentionDays     int  `json:"retention_days"`
 }

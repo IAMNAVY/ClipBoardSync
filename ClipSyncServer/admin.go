@@ -14,7 +14,11 @@ import (
 // ============================================================================
 
 func handleGetConfig(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"allow_registration": allowRegistration})
+	c.JSON(http.StatusOK, gin.H{
+		"allow_registration": allowRegistration,
+		"retention_count":    retentionCount,
+		"retention_days":     retentionDays,
+	})
 }
 
 func adminMiddleware() gin.HandlerFunc {
@@ -36,14 +40,30 @@ func handleUpdateConfig(c *gin.Context) {
 		return
 	}
 
+	// Update AllowRegistration
 	allowRegistration = req.AllowRegistration
 	valStr := "false"
 	if allowRegistration {
 		valStr = "true"
 	}
-	db.Model(&SystemSetting{}).Where("key = ?", "AllowRegistration").Update("value", valStr)
+	saveSetting("AllowRegistration", valStr)
 
-	c.JSON(http.StatusOK, gin.H{"message": "config updated", "allow_registration": allowRegistration})
+	// Update retention settings
+	if req.RetentionCount >= 0 {
+		retentionCount = req.RetentionCount
+		saveSetting("RetentionCount", strconv.Itoa(retentionCount))
+	}
+	if req.RetentionDays >= 0 {
+		retentionDays = req.RetentionDays
+		saveSetting("RetentionDays", strconv.Itoa(retentionDays))
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":            "config updated",
+		"allow_registration": allowRegistration,
+		"retention_count":    retentionCount,
+		"retention_days":     retentionDays,
+	})
 }
 
 func handleAdminGetUsers(c *gin.Context) {
