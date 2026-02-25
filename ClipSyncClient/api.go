@@ -13,15 +13,16 @@ var httpClient = &http.Client{Timeout: 15 * time.Second}
 
 // loginResponse maps the server's /api/login JSON response.
 type loginResponse struct {
-	Message  string `json:"message"`
-	Token    string `json:"token"`
-	UserID   uint   `json:"user_id"`
-	Username string `json:"username"`
-	Error    string `json:"error"`
+	Message      string `json:"message"`
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"`
+	UserID       uint   `json:"user_id"`
+	Username     string `json:"username"`
+	Error        string `json:"error"`
 }
 
-// Login authenticates with the server and returns the JWT token.
-func Login(serverURL, username, password string) (string, error) {
+// Login authenticates with the server and returns the access token and refresh token.
+func Login(serverURL, username, password string) (accessToken, refreshToken string, err error) {
 	body, _ := json.Marshal(map[string]string{
 		"username": username,
 		"password": password,
@@ -33,7 +34,7 @@ func Login(serverURL, username, password string) (string, error) {
 		bytes.NewReader(body),
 	)
 	if err != nil {
-		return "", fmt.Errorf("连接服务器失败: %w", err)
+		return "", "", fmt.Errorf("连接服务器失败: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -41,7 +42,7 @@ func Login(serverURL, username, password string) (string, error) {
 
 	var lr loginResponse
 	if err := json.Unmarshal(respBody, &lr); err != nil {
-		return "", fmt.Errorf("解析响应失败: %w", err)
+		return "", "", fmt.Errorf("解析响应失败: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -49,13 +50,50 @@ func Login(serverURL, username, password string) (string, error) {
 		if msg == "" {
 			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
-		return "", fmt.Errorf("登录失败: %s", msg)
+		return "", "", fmt.Errorf("登录失败: %s", msg)
 	}
 
 	if lr.Token == "" {
-		return "", fmt.Errorf("服务器未返回 Token")
+		return "", "", fmt.Errorf("服务器未返回 Token")
 	}
-	return lr.Token, nil
+	return lr.Token, lr.RefreshToken, nil
+}
+
+// RefreshAccessToken exchanges a refresh token for a new access+refresh token pair.
+func RefreshAccessToken(serverURL, refreshToken string) (newAccessToken, newRefreshToken string, err error) {
+	body, _ := json.Marshal(map[string]string{
+		"refresh_token": refreshToken,
+	})
+
+	resp, err := httpClient.Post(
+		serverURL+"/api/refresh",
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("连接服务器失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	var lr loginResponse
+	if err := json.Unmarshal(respBody, &lr); err != nil {
+		return "", "", fmt.Errorf("解析响应失败: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		msg := lr.Error
+		if msg == "" {
+			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
+		}
+		return "", "", fmt.Errorf("刷新 Token 失败: %s", msg)
+	}
+
+	if lr.Token == "" {
+		return "", "", fmt.Errorf("服务器未返回 Token")
+	}
+	return lr.Token, lr.RefreshToken, nil
 }
 
 // PushClipboard sends clipboard content to the server.

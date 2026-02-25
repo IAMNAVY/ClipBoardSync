@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 )
 
@@ -31,6 +32,7 @@ func main() {
 			cfg.Username = result.Username
 			cfg.Password = result.Password
 			cfg.Token = result.Token
+			cfg.RefreshToken = result.RefreshToken
 			if err := SaveConfig(cfg); err != nil {
 				log.Printf("[config-ui] 保存配置失败: %v", err)
 			}
@@ -137,6 +139,21 @@ func startSyncServices() {
 
 		if err := PushClipboard(s, t, content, d); err != nil {
 			log.Printf("[main] 上传剪贴板失败: %v", err)
+			if strings.Contains(err.Error(), "HTTP 401") || strings.Contains(err.Error(), "401 Unauthorized") {
+				log.Println("[main] 检测到 HTTP 401，尝试自动续签 Token...")
+				handleTokenRenewal()
+				// Retry once with new token
+				configLock.Lock()
+				newT := appConfig.Token
+				configLock.Unlock()
+				if newT != "" && newT != t {
+					if retryErr := PushClipboard(s, newT, content, d); retryErr != nil {
+						log.Printf("[main] 续签后重试上传失败: %v", retryErr)
+					} else {
+						log.Println("[main] 续签后重试上传成功")
+					}
+				}
+			}
 		} else {
 			log.Println("[main] 剪贴板内容已上传")
 		}
@@ -284,30 +301,61 @@ func handleReconnect() {
 	}
 }
 
-// handleTokenRenewal attempts to re-login with saved credentials to get a fresh token.
+// handleTokenRenewal attempts to refresh the access token using the refresh token first,
+// falling back to re-login with saved credentials if refresh fails.
 func handleTokenRenewal() {
 	configLock.Lock()
 	serverURL := appConfig.ServerURL
+	refreshTok := appConfig.RefreshToken
 	username := appConfig.Username
 	password := appConfig.Password
 	configLock.Unlock()
 
-	if username == "" || password == "" || serverURL == "" {
+	if serverURL == "" {
+		log.Println("[main] 无法续签 Token: 缺少服务器地址，需要重新配置")
+		go handleReconfigure()
+		return
+	}
+
+	// Strategy 1: Try refresh token (preferred — no password needed)
+	if refreshTok != "" {
+		log.Println("[main] Token 过期，正在使用 Refresh Token 续签...")
+		newAccess, newRefresh, err := RefreshAccessToken(serverURL, refreshTok)
+		if err == nil {
+			log.Println("[main] Refresh Token 续签成功")
+			configLock.Lock()
+			appConfig.Token = newAccess
+			appConfig.RefreshToken = newRefresh
+			configLock.Unlock()
+			if err := SaveConfig(appConfig); err != nil {
+				log.Printf("[main] 保存续签 Token 失败: %v", err)
+			}
+			if wsClient != nil {
+				wsClient.UpdateToken(newAccess)
+			}
+			return
+		}
+		log.Printf("[main] Refresh Token 续签失败: %v，尝试密码登录...", err)
+	}
+
+	// Strategy 2: Fall back to password re-login
+	if username == "" || password == "" {
 		log.Println("[main] 无法续签 Token: 缺少已保存的凭据，需要重新配置")
 		go handleReconfigure()
 		return
 	}
 
-	log.Println("[main] Token 过期，正在尝试自动续签...")
-	newToken, err := Login(serverURL, username, password)
+	log.Println("[main] 正在使用密码重新登录...")
+	newToken, newRefreshTok, err := Login(serverURL, username, password)
 	if err != nil {
-		log.Printf("[main] 自动续签失败: %v", err)
+		log.Printf("[main] 密码登录失败: %v", err)
 		return
 	}
 
-	log.Println("[main] Token 续签成功")
+	log.Println("[main] 密码登录续签成功")
 	configLock.Lock()
 	appConfig.Token = newToken
+	appConfig.RefreshToken = newRefreshTok
 	configLock.Unlock()
 
 	if err := SaveConfig(appConfig); err != nil {

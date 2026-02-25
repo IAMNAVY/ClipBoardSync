@@ -14,10 +14,11 @@ import (
 
 // ConfigResult holds the result of the config GUI.
 type ConfigResult struct {
-	ServerURL string
-	Username  string
-	Password  string
-	Token     string
+	ServerURL    string
+	Username     string
+	Password     string
+	Token        string
+	RefreshToken string
 }
 
 // ShowConfigGUI displays a Fyne window for server configuration.
@@ -75,17 +76,18 @@ func ShowConfigGUI(prefill *AppConfig) *ConfigResult {
 
 		// Try login
 		go func() {
-			token, err := Login(server, username, password)
+			accessTok, refreshTok, err := Login(server, username, password)
 			if err != nil {
 				statusLabel.SetText(fmt.Sprintf("❌ %v", err))
 				return
 			}
 
 			result = &ConfigResult{
-				ServerURL: server,
-				Username:  username,
-				Password:  password,
-				Token:     token,
+				ServerURL:    server,
+				Username:     username,
+				Password:     password,
+				Token:        accessTok,
+				RefreshToken: refreshTok,
 			}
 
 			statusLabel.SetText("✅ 登录成功！")

@@ -50,6 +50,10 @@ type ChangePasswordRequest struct {
 	NewPassword string `json:"new_password" binding:"required,min=6,max=128"`
 }
 
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
 type AdminPasswordReset struct {
 	NewPassword string `json:"new_password" binding:"required,min=6,max=128"`
 }

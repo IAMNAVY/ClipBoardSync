@@ -596,6 +596,7 @@ const indexHTML = `<!DOCTYPE html>
 <script>
 const API = window.location.origin;
 let token = localStorage.getItem('token');
+let refreshToken = localStorage.getItem('refresh_token');
 let username = localStorage.getItem('username');
 let ws = null;
 let intentionalClose = false;
@@ -606,6 +607,7 @@ let clipPage = 1;
 const CLIPS_PER_PAGE = 10;
 let currentDeviceName = 'Web 浏览器';
 let pwdContext = { type: 'self', targetId: null };
+let isRefreshing = false;
 
 // Init
 initApp();
@@ -659,13 +661,55 @@ function showToast(msg, type='success') {
   }, 3000);
 }
 
-async function apiFetch(path, opts={}) {
+async function apiFetch(path, opts={}, _isRetry=false) {
   const headers = { 'Content-Type': 'application/json', ...opts.headers };
   if (token) headers['Authorization'] = 'Bearer ' + token;
   const res = await fetch(API + path, { ...opts, headers });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || '请求失败');
+  if (!res.ok) {
+    // Auto-refresh on token_expired
+    if (res.status === 401 && data.error === 'token_expired' && !_isRetry && refreshToken) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed) return apiFetch(path, opts, true);
+      logout();
+      throw new Error('登录已过期，请重新登录');
+    }
+    // Auto-logout on other 401 errors (invalid token, etc.)
+    if (res.status === 401 && !_isRetry) {
+      logout();
+      throw new Error('登录已失效，请重新登录');
+    }
+    throw new Error(data.error || '请求失败');
+  }
   return data;
+}
+
+async function tryRefreshToken() {
+  if (isRefreshing) return false;
+  isRefreshing = true;
+  try {
+    const res = await fetch(API + '/api/refresh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshToken })
+    });
+    if (!res.ok) {
+      isRefreshing = false;
+      return false;
+    }
+    const data = await res.json();
+    token = data.token;
+    refreshToken = data.refresh_token;
+    localStorage.setItem('token', token);
+    localStorage.setItem('refresh_token', refreshToken);
+    console.log('[auth] Token refreshed successfully');
+    isRefreshing = false;
+    return true;
+  } catch (e) {
+    console.error('[auth] Token refresh failed:', e);
+    isRefreshing = false;
+    return false;
+  }
 }
 
 async function register() {
@@ -704,14 +748,17 @@ async function login() {
 
 function setAuth(data) {
   token = data.token;
+  refreshToken = data.refresh_token;
   username = data.username;
   localStorage.setItem('token', token);
+  localStorage.setItem('refresh_token', refreshToken || '');
   localStorage.setItem('username', username);
 }
 
 function logout() {
-  token = null; username = null;
+  token = null; refreshToken = null; username = null;
   localStorage.removeItem('token');
+  localStorage.removeItem('refresh_token');
   localStorage.removeItem('username');
   intentionalClose = true;
   if (ws) { ws.close(); ws = null; }
@@ -1042,6 +1089,8 @@ function connectWS() {
   if (ws) { ws.close(); ws = null; }
   intentionalClose = false;
 
+  if (!token) return;
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + location.host + '/ws?token=' + token + '&device_name=' + encodeURIComponent('Web 浏览器'));
 
@@ -1053,11 +1102,19 @@ function connectWS() {
     status.textContent = '已连接';
   };
 
-  ws.onclose = () => {
+  ws.onclose = (event) => {
     badge.classList.remove('online');
     status.textContent = '重连中...';
     if (!intentionalClose) {
-      setTimeout(() => { if (token) connectWS(); }, 5000);
+      // If we got a 401 close, try refresh first
+      if (event.code === 1008 || event.code === 4001) {
+        tryRefreshToken().then(ok => {
+          if (ok) { connectWS(); }
+          else { logout(); }
+        });
+      } else {
+        setTimeout(() => { if (token) connectWS(); }, 5000);
+      }
     }
   };
 

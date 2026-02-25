@@ -18,13 +18,14 @@ const (
 
 // AppConfig holds user-persistent configuration.
 type AppConfig struct {
-	ServerURL  string `json:"server_url"`
-	Username   string `json:"username"`
-	Password   string `json:"password"` // saved for automatic token renewal
-	Token      string `json:"token"`
-	AutoStart  bool   `json:"auto_start"`
-	DeviceName string `json:"device_name"`
-	SyncMode   string `json:"sync_mode"`
+	ServerURL    string `json:"server_url"`
+	Username     string `json:"username"`
+	Password     string `json:"password"` // saved for automatic token renewal
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token"` // for dual-token seamless renewal
+	AutoStart    bool   `json:"auto_start"`
+	DeviceName   string `json:"device_name"`
+	SyncMode     string `json:"sync_mode"`
 }
 
 // GetSyncMode returns the sync mode, defaulting to bidirectional.

@@ -41,7 +41,7 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
-    onLoginSuccess: (serverUrl: String, username: String, password: String, token: String) -> Unit
+    onLoginSuccess: (serverUrl: String, username: String, password: String, token: String, refreshToken: String) -> Unit
 ) {
     var serverUrl by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
@@ -65,7 +65,7 @@ fun LoginScreen(
             isLoading = false
             result.fold(
                 onSuccess = { resp ->
-                    onLoginSuccess(serverUrl.trim(), resp.username, password, resp.token)
+                    onLoginSuccess(serverUrl.trim(), resp.username, password, resp.token, resp.refresh_token)
                 },
                 onFailure = { e ->
                     errorMsg = e.message ?: "登录失败"

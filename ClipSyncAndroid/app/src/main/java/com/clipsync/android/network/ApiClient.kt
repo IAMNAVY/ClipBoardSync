@@ -14,6 +14,7 @@ import java.util.concurrent.TimeUnit
 data class LoginResponse(
     val message: String = "",
     val token: String = "",
+    val refresh_token: String = "",
     val user_id: Int = 0,
     val username: String = "",
     val error: String = ""
@@ -53,6 +54,35 @@ object ApiClient {
                 }
             } catch (e: Exception) {
                 Result.failure(Exception("连接服务器失败: ${e.message}"))
+            }
+        }
+
+    /**
+     * Exchanges a refresh token for a new access+refresh token pair.
+     */
+    suspend fun refreshAccessToken(serverUrl: String, refreshToken: String): Result<LoginResponse> =
+        withContext(Dispatchers.IO) {
+            try {
+                val body = """{"refresh_token":"$refreshToken"}"""
+                    .toRequestBody(jsonMediaType)
+
+                val request = Request.Builder()
+                    .url("${serverUrl.trimEnd('/')}/api/refresh")
+                    .post(body)
+                    .build()
+
+                val response = client.newCall(request).execute()
+                val responseBody = response.body?.string() ?: ""
+                val resp = json.decodeFromString<LoginResponse>(responseBody)
+
+                if (response.isSuccessful && resp.token.isNotBlank()) {
+                    Result.success(resp)
+                } else {
+                    val msg = resp.error.ifBlank { "HTTP ${response.code}" }
+                    Result.failure(Exception("刷新 Token 失败: $msg"))
+                }
+            } catch (e: Exception) {
+                Result.failure(Exception("刷新 Token 失败: ${e.message}"))
             }
         }
 

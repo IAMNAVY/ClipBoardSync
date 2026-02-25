@@ -81,8 +81,12 @@ func handleAdminDeleteUser(c *gin.Context) {
 	// Disconnect all sessions belonging to this user
 	val, exists := hub.clients.Load(uint(targetID))
 	if exists {
-		for _, client := range *val.(*[]*Client) {
-			// This will trigger force disconnect logic properly
+		uc := val.(*userClients)
+		uc.mu.RLock()
+		snapshot := make([]*Client, len(uc.list))
+		copy(snapshot, uc.list)
+		uc.mu.RUnlock()
+		for _, client := range snapshot {
 			client.writeJSON(gin.H{"type": "force_disconnect", "reason": "account deleted by admin"})
 			client.conn.Close()
 		}

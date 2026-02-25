@@ -300,7 +300,12 @@ class ClipSyncService : Service() {
                 clipboardHelper.markUploaded(content)
                 Log.d(TAG, "Clipboard uploaded (${content.length} chars)")
             } else {
-                Log.e(TAG, "Clipboard upload failed: ${result.exceptionOrNull()?.message}")
+                val errMsg = result.exceptionOrNull()?.message ?: ""
+                Log.e(TAG, "Clipboard upload failed: $errMsg")
+                if (errMsg.contains("HTTP 401") || errMsg.contains("401 Unauthorized")) {
+                    Log.d(TAG, "Detected 401 during upload, triggering token renewal...")
+                    handleTokenRenewal()
+                }
             }
         }
     }
@@ -326,29 +331,61 @@ class ClipSyncService : Service() {
     }
 
     /**
-     * Attempts to re-login with saved credentials to get a fresh token.
+     * Attempts to renew the access token using the refresh token first,
+     * falling back to password re-login if refresh fails.
      */
     private fun handleTokenRenewal() {
         scope.launch {
             val config = prefs.configFlow.first()
             val serverUrl = config.serverUrl
+            val refreshTok = config.refreshToken
             val username = config.username
             val password = config.password
 
-            if (username.isBlank() || password.isBlank() || serverUrl.isBlank()) {
+            if (serverUrl.isBlank()) {
+                Log.w(TAG, "Cannot renew token: missing server URL")
+                return@launch
+            }
+
+            // Strategy 1: Try refresh token (preferred — no password needed)
+            if (refreshTok.isNotBlank()) {
+                Log.d(TAG, "Token expired, attempting renewal via refresh token...")
+                val refreshResult = ApiClient.refreshAccessToken(serverUrl, refreshTok)
+                refreshResult.fold(
+                    onSuccess = { resp ->
+                        Log.d(TAG, "Refresh token renewal succeeded")
+                        val newConfig = config.copy(
+                            token = resp.token,
+                            refreshToken = resp.refresh_token
+                        )
+                        prefs.saveConfig(newConfig)
+                        currentConfig = newConfig
+                        wsClient?.updateToken(resp.token)
+                        return@launch
+                    },
+                    onFailure = { e ->
+                        Log.w(TAG, "Refresh token renewal failed: ${e.message}, trying password...")
+                    }
+                )
+            }
+
+            // Strategy 2: Fall back to password re-login
+            if (username.isBlank() || password.isBlank()) {
                 Log.w(TAG, "Cannot renew token: missing saved credentials")
                 return@launch
             }
 
-            Log.d(TAG, "Token expired, attempting auto-renewal...")
+            Log.d(TAG, "Attempting token renewal via password login...")
             val result = ApiClient.login(serverUrl, username, password)
             result.fold(
                 onSuccess = { resp ->
-                    Log.d(TAG, "Token renewed successfully")
-                    // Save new token
-                    prefs.saveConfig(config.copy(token = resp.token))
-                    currentConfig = config.copy(token = resp.token)
-                    // Update WsClient token
+                    Log.d(TAG, "Password login renewal succeeded")
+                    val newConfig = config.copy(
+                        token = resp.token,
+                        refreshToken = resp.refresh_token
+                    )
+                    prefs.saveConfig(newConfig)
+                    currentConfig = newConfig
                     wsClient?.updateToken(resp.token)
                 },
                 onFailure = { e ->

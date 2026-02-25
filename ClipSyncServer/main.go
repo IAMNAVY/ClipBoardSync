@@ -35,6 +35,7 @@ func main() {
 	// Auth routes
 	r.POST("/api/register", handleRegister)
 	r.POST("/api/login", handleLogin)
+	r.POST("/api/refresh", handleRefreshToken)
 	r.GET("/api/config", handleGetConfig) // Public config
 
 	// WebSocket

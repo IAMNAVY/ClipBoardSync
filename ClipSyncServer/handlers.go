@@ -47,12 +47,13 @@ func handleRegister(c *gin.Context) {
 		return
 	}
 
-	token, _ := generateToken(user.ID, user.Username)
+	accessToken, refreshToken, _ := generateTokenPair(user.ID, user.Username)
 	c.JSON(http.StatusCreated, gin.H{
-		"message":  "registration successful",
-		"token":    token,
-		"user_id":  user.ID,
-		"username": user.Username,
+		"message":       "registration successful",
+		"token":         accessToken,
+		"refresh_token": refreshToken,
+		"user_id":       user.ID,
+		"username":      user.Username,
 	})
 }
 
@@ -74,12 +75,44 @@ func handleLogin(c *gin.Context) {
 		return
 	}
 
-	token, _ := generateToken(user.ID, user.Username)
+	accessToken, refreshToken, _ := generateTokenPair(user.ID, user.Username)
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "login successful",
-		"token":    token,
-		"user_id":  user.ID,
-		"username": user.Username,
+		"message":       "login successful",
+		"token":         accessToken,
+		"refresh_token": refreshToken,
+		"user_id":       user.ID,
+		"username":      user.Username,
+	})
+}
+
+// handleRefreshToken exchanges a valid refresh_token for a new token pair.
+func handleRefreshToken(c *gin.Context) {
+	var req RefreshRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	userID, username, err := parseRefreshToken(req.RefreshToken)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid or expired refresh token"})
+		return
+	}
+
+	// Verify user still exists in DB
+	var user User
+	if db.First(&user, userID).Error != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user no longer exists"})
+		return
+	}
+
+	// Issue new token pair (rotate refresh token for security)
+	accessToken, refreshToken, _ := generateTokenPair(userID, username)
+	c.JSON(http.StatusOK, gin.H{
+		"token":         accessToken,
+		"refresh_token": refreshToken,
+		"user_id":       userID,
+		"username":      username,
 	})
 }
 
