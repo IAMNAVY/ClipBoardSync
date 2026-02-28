@@ -478,6 +478,10 @@ const indexHTML = `<!DOCTYPE html>
           <svg class="icon" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></svg>
           在线设备 <span id="device-count-badge" style="margin-left:auto; background:var(--accent); color:#fff; border-radius:99px; padding:1px 8px; font-size:0.75em; font-weight:700;">0</span>
         </div>
+        <div class="nav-item user-nav" id="nav-cleanrules" onclick="switchView('cleanrules')">
+          <svg class="icon" viewBox="0 0 24 24"><path d="M14.17 5L19 9.83V19H5V5h9.17M15 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V9l-6-6zM12 14c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
+          内容过滤
+        </div>
 
         <!-- Admin items -->
         <div class="nav-item admin-nav hidden" id="nav-users" onclick="switchView('users')">
@@ -573,6 +577,38 @@ const indexHTML = `<!DOCTYPE html>
           <div class="card">
             <div id="device-list">
               <div style="padding: 40px; text-align: center; color: var(--text-dim);">暂无在线设备</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clean Rules View -->
+        <div id="view-cleanrules" class="view-panel hidden">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 style="font-size: 1.5em; font-weight: 700;">内容过滤规则</h2>
+            <button class="btn btn-primary btn-small" onclick="showAddRuleForm()">+ 添加规则</button>
+          </div>
+          <p style="color:var(--text-dim); font-size:0.9em; margin-top:8px;">使用正则表达式自动过滤剪贴板内容。「清理」模式会删除匹配的部分，「忽略」模式会跳过整条（不同步不存储）。</p>
+
+          <div id="rule-form-card" class="card hidden" style="margin-top:16px;">
+            <div class="card-body">
+              <h3 id="rule-form-title" style="font-size:1.1em; margin-bottom:12px;">添加规则</h3>
+              <input type="text" id="rule-pattern" placeholder="正则表达式 (如: [?&]utm_\w+=[^&]*)" style="margin-bottom:12px;">
+              <input type="text" id="rule-desc" placeholder="描述 (可选，如: 清除UTM追踪参数)" style="margin-bottom:12px;">
+              <div style="display:flex; gap:12px; margin-bottom:16px; align-items:center;">
+                <label style="font-size:0.9em; color:var(--text-dim);">动作：</label>
+                <label style="display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="radio" name="rule-action" value="clean" checked> 清理 (删除匹配部分)</label>
+                <label style="display:flex; align-items:center; gap:4px; cursor:pointer;"><input type="radio" name="rule-action" value="ignore"> 忽略 (跳过整条)</label>
+              </div>
+              <div style="display:flex; gap:8px; justify-content:flex-end;">
+                <button class="btn btn-outline btn-small" onclick="hideRuleForm()">取消</button>
+                <button class="btn btn-primary btn-small" id="rule-save-btn" onclick="saveRule()">保存</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-top:16px;">
+            <div id="rule-list">
+              <div style="padding: 40px; text-align: center; color: var(--text-dim);">加载中...</div>
             </div>
           </div>
         </div>
@@ -837,6 +873,7 @@ function switchView(view) {
   if (view === 'devices') loadDevices();
   if (view === 'users') loadUsers();
   if (view === 'settings') loadSettings();
+  if (view === 'cleanrules') loadCleanRules();
 
   // Auto-collapse sidebar on mobile
   const sidebar = document.getElementById('main-sidebar');
@@ -1395,6 +1432,132 @@ async function togglePin(id) {
     loadHistory();
   } catch(e) {
     showToast('操作失败: ' + e.message, 'error');
+  }
+}
+
+// ==========================================
+// Clean Rules Management
+// ==========================================
+let cleanRules = [];
+let editingRuleId = null;
+
+async function loadCleanRules() {
+  try {
+    const data = await apiFetch('/api/cleanrules');
+    cleanRules = data.rules || [];
+    renderCleanRules();
+  } catch(e) {
+    showToast('加载过滤规则失败: ' + e.message, 'error');
+  }
+}
+
+function renderCleanRules() {
+  const list = document.getElementById('rule-list');
+  if (!cleanRules.length) {
+    list.innerHTML = '<div style="padding: 40px; text-align: center; color: var(--text-dim);">暂无过滤规则</div>';
+    return;
+  }
+  list.innerHTML = '';
+  cleanRules.forEach(r => {
+    const actionBadge = r.action === 'ignore'
+      ? '<span style="background:rgba(239,68,68,0.1); color:var(--danger); padding:2px 8px; border-radius:99px; font-size:0.75em; font-weight:600;">忽略</span>'
+      : '<span style="background:rgba(16,185,129,0.1); color:var(--success); padding:2px 8px; border-radius:99px; font-size:0.75em; font-weight:600;">清理</span>';
+    const enabledStyle = r.enabled ? '' : 'opacity:0.5;';
+    const toggleText = r.enabled ? '禁用' : '启用';
+    const div = document.createElement('div');
+    div.style.cssText = 'display:flex; justify-content:space-between; align-items:center; padding:16px 20px; border-bottom:1px solid var(--border);' + enabledStyle;
+    div.innerHTML = '<div style="flex:1; min-width:0;">'
+      + '<div style="display:flex; align-items:center; gap:8px; margin-bottom:4px;">'
+      + '<code style="font-size:0.9em; background:var(--bg); padding:2px 8px; border-radius:4px; word-break:break-all;">' + escapeHtml(r.pattern) + '</code>'
+      + actionBadge
+      + '</div>'
+      + (r.description ? '<div style="font-size:0.8em; color:var(--text-dim);">' + escapeHtml(r.description) + '</div>' : '')
+      + '</div>'
+      + '<div style="display:flex; gap:4px; flex-shrink:0;">'
+      + '<button class="btn btn-outline btn-small" onclick="toggleRule(' + r.id + ', ' + r.enabled + ')">' + toggleText + '</button>'
+      + '<button class="btn-icon" title="编辑" onclick="editRule(' + r.id + ')">' + editIcon() + '</button>'
+      + '<button class="btn-icon danger" title="删除" onclick="deleteRule(' + r.id + ')">' + trashIcon() + '</button>'
+      + '</div>';
+    list.appendChild(div);
+  });
+}
+
+function showAddRuleForm() {
+  editingRuleId = null;
+  document.getElementById('rule-form-title').textContent = '添加规则';
+  document.getElementById('rule-pattern').value = '';
+  document.getElementById('rule-desc').value = '';
+  document.querySelector('input[name="rule-action"][value="clean"]').checked = true;
+  document.getElementById('rule-form-card').classList.remove('hidden');
+}
+
+function editRule(id) {
+  const rule = cleanRules.find(r => r.id === id);
+  if (!rule) return;
+  editingRuleId = id;
+  document.getElementById('rule-form-title').textContent = '编辑规则';
+  document.getElementById('rule-pattern').value = rule.pattern;
+  document.getElementById('rule-desc').value = rule.description || '';
+  const actionRadio = document.querySelector('input[name="rule-action"][value="' + rule.action + '"]');
+  if (actionRadio) actionRadio.checked = true;
+  document.getElementById('rule-form-card').classList.remove('hidden');
+}
+
+function hideRuleForm() {
+  editingRuleId = null;
+  document.getElementById('rule-form-card').classList.add('hidden');
+}
+
+async function saveRule() {
+  const pattern = document.getElementById('rule-pattern').value.trim();
+  const desc = document.getElementById('rule-desc').value.trim();
+  const action = document.querySelector('input[name="rule-action"]:checked').value;
+  if (!pattern) return showToast('请输入正则表达式', 'error');
+
+  try {
+    if (editingRuleId) {
+      await apiFetch('/api/cleanrules/' + editingRuleId, {
+        method: 'PUT',
+        body: JSON.stringify({ pattern, action, description: desc, enabled: true })
+      });
+      showToast('规则已更新');
+    } else {
+      await apiFetch('/api/cleanrules', {
+        method: 'POST',
+        body: JSON.stringify({ pattern, action, description: desc, enabled: true })
+      });
+      showToast('规则已创建');
+    }
+    hideRuleForm();
+    loadCleanRules();
+  } catch(e) {
+    showToast('保存失败: ' + e.message, 'error');
+  }
+}
+
+async function toggleRule(id, currentEnabled) {
+  const rule = cleanRules.find(r => r.id === id);
+  if (!rule) return;
+  try {
+    await apiFetch('/api/cleanrules/' + id, {
+      method: 'PUT',
+      body: JSON.stringify({ pattern: rule.pattern, action: rule.action, description: rule.description, enabled: !currentEnabled })
+    });
+    showToast(currentEnabled ? '规则已禁用' : '规则已启用');
+    loadCleanRules();
+  } catch(e) {
+    showToast('操作失败: ' + e.message, 'error');
+  }
+}
+
+async function deleteRule(id) {
+  if (!confirm('确定要删除这条过滤规则吗？')) return;
+  try {
+    await apiFetch('/api/cleanrules/' + id, { method: 'DELETE' });
+    showToast('规则已删除');
+    loadCleanRules();
+  } catch(e) {
+    showToast('删除失败: ' + e.message, 'error');
   }
 }
 </script>

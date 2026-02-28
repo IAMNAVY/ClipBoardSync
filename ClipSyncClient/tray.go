@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"sync"
+	"time"
 
 	"github.com/getlantern/systray"
 )
@@ -220,6 +221,29 @@ func applySyncModeCheck(mode string) {
 	default:
 		traySyncBidi.Check()
 	}
+}
+
+// FlashTrayIcon briefly changes the tray tooltip to indicate sync activity.
+func FlashTrayIcon() {
+	trayMu.Lock()
+	ready := trayReady
+	trayMu.Unlock()
+	if !ready {
+		return
+	}
+
+	go func() {
+		systray.SetTooltip("ClipSync - 📋 同步中...")
+		time.Sleep(500 * time.Millisecond)
+		trayMu.Lock()
+		name := cachedDeviceName
+		trayMu.Unlock()
+		if name != "" {
+			systray.SetTooltip("ClipSync - " + name)
+		} else {
+			systray.SetTooltip("ClipSync - 剪贴板同步")
+		}
+	}()
 }
 
 func onTrayExit() {

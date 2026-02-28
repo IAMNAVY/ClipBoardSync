@@ -61,7 +61,7 @@ func initDB() {
 	sqlDB.Exec("PRAGMA synchronous=NORMAL")
 
 	// Auto migrate
-	db.AutoMigrate(&User{}, &ClipEntry{}, &SystemSetting{})
+	db.AutoMigrate(&User{}, &ClipEntry{}, &CleanRule{}, &SystemSetting{})
 
 	// Initialize SystemSettings
 	initSetting("AllowRegistration", "true")

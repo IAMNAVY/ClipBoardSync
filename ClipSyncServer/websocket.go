@@ -246,6 +246,16 @@ func handleWebSocket(c *gin.Context) {
 				continue
 			}
 
+			// Apply user's clean rules
+			content, shouldIgnore := applyCleanRules(userID, content)
+			if shouldIgnore {
+				log.Printf("[ws] 内容被过滤规则忽略 (user %d)", userID)
+				continue
+			}
+			if content == "" {
+				continue
+			}
+
 			entry := ClipEntry{
 				UserID:     userID,
 				Content:    content,
@@ -264,6 +274,7 @@ func handleWebSocket(c *gin.Context) {
 				"id":          entry.ID,
 				"device_name": entry.DeviceName,
 				"created_at":  entry.CreatedAt,
+				"server_ts":   time.Now().UnixMilli(),
 			}, client)
 		}
 	}

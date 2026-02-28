@@ -32,6 +32,8 @@ type WSClient struct {
 
 	forceDisconnected bool // set when server sends force_disconnect
 
+	lastReceivedTS int64 // server timestamp of last received clip (for conflict resolution)
+
 	stopCh      chan struct{}
 	done        chan struct{}
 	reconnectCh chan struct{} // external trigger for immediate reconnect
@@ -282,6 +284,19 @@ func (w *WSClient) connectAndListen() (bool, error) {
 		switch msgType {
 		case "clip":
 			if content, ok := msg["content"].(string); ok && content != "" {
+				// Anti-loop: check server timestamp to skip stale messages
+				if tsFloat, ok := msg["server_ts"].(float64); ok {
+					serverTS := int64(tsFloat)
+					w.mu.Lock()
+					if serverTS > 0 && serverTS <= w.lastReceivedTS {
+						w.mu.Unlock()
+						log.Printf("[ws] 跳过旧时间戳消息 (ts=%d, last=%d)", serverTS, w.lastReceivedTS)
+						continue
+					}
+					w.lastReceivedTS = serverTS
+					w.mu.Unlock()
+				}
+
 				log.Printf("[ws] 收到远程剪贴板内容 (%d 字符)", len(content))
 				if w.onClip != nil {
 					w.onClip(content)

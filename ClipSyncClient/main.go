@@ -116,7 +116,7 @@ func showConfigAndConnect() {
 	configLock.Unlock()
 }
 
-// startSyncServices launches the clipboard monitor and WebSocket client.
+// startSyncServices launches the clipboard monitor, WebSocket client, and hotkey listener.
 func startSyncServices() {
 	configLock.Lock()
 	serverURL := appConfig.ServerURL
@@ -135,6 +135,16 @@ func startSyncServices() {
 
 		if !canUpload {
 			log.Println("[main] 上传已禁用，跳过")
+			return
+		}
+
+		// URL tracking parameter cleanup
+		content = CleanTrackingURL(content)
+
+		// Check if WebSocket is connected; if not, enqueue for later
+		if wsClient != nil && !wsClient.IsConnected() {
+			clipMon.Enqueue(content)
+			log.Println("[main] 网络断开，已暂存到离线队列")
 			return
 		}
 
@@ -173,11 +183,32 @@ func startSyncServices() {
 				log.Println("[main] 下载已禁用，跳过远程剪贴板")
 				return
 			}
+
+			// URL tracking parameter cleanup on received content too
+			content = CleanTrackingURL(content)
+
 			clipMon.WriteClipboard(content)
+
+			// Sync feedback: notification + sound + tray flash
+			ShowSyncNotification(content)
 		},
-		// onStatus: update tray icon
+		// onStatus: update tray icon + flush offline queue on reconnect
 		func(connected bool) {
 			UpdateTrayStatus(connected)
+
+			// Flush offline queue when connection is restored
+			if connected && clipMon != nil {
+				go func() {
+					configLock.Lock()
+					s := appConfig.ServerURL
+					t := appConfig.Token
+					d := GetDeviceName(appConfig)
+					configLock.Unlock()
+					clipMon.FlushQueue(func(content string) error {
+						return PushClipboard(s, t, content, d)
+					})
+				}()
+			}
 		},
 		// onDeviceRenamed: server remotely renamed this device
 		func(newName string) {
@@ -220,10 +251,14 @@ func startSyncServices() {
 		},
 	)
 	wsClient.Start()
+
+	// Start global hotkey listener (Ctrl+Shift+Z for clipboard undo)
+	StartHotkeyListener(handleClipboardUndo)
 }
 
-// stopSyncServices gracefully stops the clipboard monitor and WebSocket client.
+// stopSyncServices gracefully stops the clipboard monitor, WebSocket client, and hotkey listener.
 func stopSyncServices() {
+	StopHotkeyListener()
 	if clipMon != nil {
 		clipMon.Stop()
 		clipMon = nil
@@ -381,6 +416,47 @@ func handleSyncModeChanged(mode string) {
 	}
 }
 
+// handleClipboardUndo fetches the previous clipboard entry from server and writes it to local clipboard.
+// This implements the Ctrl+Shift+Z "undo" feature.
+func handleClipboardUndo() {
+	configLock.Lock()
+	s := appConfig.ServerURL
+	t := appConfig.Token
+	configLock.Unlock()
+
+	if s == "" || t == "" {
+		log.Println("[undo] 未配置服务器/未登录，无法撤销")
+		return
+	}
+
+	entries, err := FetchClipboardHistory(s, t, "", "", false)
+	if err != nil {
+		log.Printf("[undo] 获取历史记录失败: %v", err)
+		return
+	}
+
+	// We need at least 2 entries to undo (current + previous)
+	if len(entries) < 2 {
+		log.Println("[undo] 历史记录不足，无法回退")
+		return
+	}
+
+	// entries[0] is the most recent, entries[1] is the previous one
+	prevContent := entries[1].Content
+	if prevContent == "" {
+		log.Println("[undo] 上一条记录为空")
+		return
+	}
+
+	log.Printf("[undo] 回退剪贴板到上一条记录 (%d 字符)", len(prevContent))
+	if clipMon != nil {
+		clipMon.WriteClipboard(prevContent)
+	}
+
+	// Show notification
+	ShowSyncNotification("↩ 已回退: " + prevContent)
+}
+
 // setupLogging configures logging to a file alongside the config.
 func setupLogging() {
 	dir, err := configDir()
@@ -394,4 +470,5 @@ func setupLogging() {
 	log.SetOutput(logFile)
 	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
 }
+
 

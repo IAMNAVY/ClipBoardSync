@@ -53,6 +53,10 @@ func main() {
 		api.DELETE("/devices/:id", handleRemoveDevice)
 		api.PUT("/user/password", handleChangePassword) // New modify password route
 		api.PUT("/clipboard/:id/pin", handleTogglePin)  // Toggle pin/favorite
+		api.GET("/cleanrules", handleGetCleanRules)        // List user clean rules
+		api.POST("/cleanrules", handleCreateCleanRule)      // Create clean rule
+		api.PUT("/cleanrules/:id", handleUpdateCleanRule)   // Update clean rule
+		api.DELETE("/cleanrules/:id", handleDeleteCleanRule) // Delete clean rule
 	}
 
 	// Admin routes

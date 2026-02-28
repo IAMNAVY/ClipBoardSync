@@ -33,7 +33,9 @@ class ClipSyncService : Service() {
     companion object {
         private const val TAG = "ClipSyncService"
         private const val CHANNEL_ID = "clipsync_service"
+        private const val SYNC_CHANNEL_ID = "clipsync_sync"
         private const val NOTIFICATION_ID = 1
+        private const val SYNC_NOTIFICATION_ID = 2
 
         @Volatile
         var instance: ClipSyncService? = null
@@ -243,6 +245,8 @@ class ClipSyncService : Service() {
             onClip = { content ->
                 if (currentConfig.shouldDownload) {
                     clipboardHelper.writeClipboard(content)
+                    // Show sync notification with auto-dismiss
+                    showSyncNotification(content)
                 } else {
                     Log.d(TAG, "Download disabled, ignoring remote clipboard")
                 }
@@ -403,15 +407,27 @@ class ClipSyncService : Service() {
     }
 
     private fun createNotificationChannel() {
-        val channel = NotificationChannel(
+        // Foreground service channel (low importance, no sound)
+        val serviceChannel = NotificationChannel(
             CHANNEL_ID,
             getString(R.string.notification_channel_name),
             NotificationManager.IMPORTANCE_LOW
         ).apply {
             description = getString(R.string.notification_channel_desc)
         }
+
+        // Sync notification channel (default importance, with sound)
+        val syncChannel = NotificationChannel(
+            SYNC_CHANNEL_ID,
+            "剪贴板同步通知",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "收到远端剪贴板内容时的通知"
+        }
+
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(channel)
+        nm.createNotificationChannel(serviceChannel)
+        nm.createNotificationChannel(syncChannel)
     }
 
     private fun buildNotification(statusText: String): Notification {
@@ -434,5 +450,34 @@ class ClipSyncService : Service() {
     private fun updateNotification(statusText: String) {
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID, buildNotification(statusText))
+    }
+
+    /**
+     * Shows a temporary sync notification that auto-dismisses after 3 seconds.
+     */
+    private fun showSyncNotification(content: String) {
+        val preview = if (content.length > 30) content.substring(0, 30) + "..." else content
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this, 1, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notification = Notification.Builder(this, SYNC_CHANNEL_ID)
+            .setContentTitle("📋 已接收")
+            .setContentText(preview)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build()
+
+        val nm = getSystemService(NotificationManager::class.java)
+        nm.notify(SYNC_NOTIFICATION_ID, notification)
+
+        // Auto-dismiss after 3 seconds
+        mainHandler.postDelayed({
+            nm.cancel(SYNC_NOTIFICATION_ID)
+        }, 3000)
     }
 }

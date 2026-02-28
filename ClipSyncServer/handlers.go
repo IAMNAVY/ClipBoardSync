@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -130,11 +131,23 @@ func handlePushClip(c *gin.Context) {
 		devName = "Web 浏览器"
 	}
 
-	category := detectCategory(req.Content)
+	// Apply user's clean rules
+	content, shouldIgnore := applyCleanRules(userID, req.Content)
+	if shouldIgnore {
+		log.Printf("[handler] 内容被过滤规则忽略 (user %d)", userID)
+		c.JSON(http.StatusOK, gin.H{"message": "content filtered (ignored)", "filtered": true})
+		return
+	}
+	if content == "" {
+		c.JSON(http.StatusOK, gin.H{"message": "content empty after cleaning", "filtered": true})
+		return
+	}
+
+	category := detectCategory(content)
 
 	entry := ClipEntry{
 		UserID:     userID,
-		Content:    req.Content,
+		Content:    content,
 		Category:   category,
 		DeviceName: devName,
 	}
@@ -155,6 +168,7 @@ func handlePushClip(c *gin.Context) {
 		"is_pinned":   entry.IsPinned,
 		"device_name": entry.DeviceName,
 		"created_at":  entry.CreatedAt,
+		"server_ts":   time.Now().UnixMilli(),
 	}, nil)
 
 	c.JSON(http.StatusOK, gin.H{

@@ -23,6 +23,17 @@ type ClipEntry struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// CleanRule defines a user-configurable regex-based content filter rule.
+// Action: "clean" = strip matched part; "ignore" = skip entire clipboard entry.
+type CleanRule struct {
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	UserID      uint   `gorm:"index;not null" json:"user_id"`
+	Pattern     string `gorm:"size:512;not null" json:"pattern"`      // regex pattern
+	Action      string `gorm:"size:16;not null" json:"action"`        // "clean" or "ignore"
+	Description string `gorm:"size:256;default:''" json:"description"` // human-readable note
+	Enabled     bool   `gorm:"default:true" json:"enabled"`
+}
+
 type SystemSetting struct {
 	Key   string `gorm:"primaryKey;size:64" json:"key"`
 	Value string `gorm:"type:text" json:"value"`
@@ -64,4 +75,11 @@ type AdminConfigUpdate struct {
 	AllowRegistration bool `json:"allow_registration"`
 	RetentionCount    int  `json:"retention_count"`
 	RetentionDays     int  `json:"retention_days"`
+}
+
+type CleanRuleRequest struct {
+	Pattern     string `json:"pattern" binding:"required"`
+	Action      string `json:"action" binding:"required,oneof=clean ignore"`
+	Description string `json:"description"`
+	Enabled     *bool  `json:"enabled"` // pointer to distinguish missing from false
 }
