@@ -332,12 +332,12 @@ const indexHTML = `<!DOCTYPE html>
   .clip-item.pinned { background: rgba(59,130,246,0.04); border-left: 3px solid var(--accent); }
 
   .filter-btn {
-    padding: 4px 12px; border-radius: 99px; border: 1px solid var(--border);
-    background: var(--surface); color: var(--text-dim); font-size: 0.8em;
-    cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    padding: 8px 16px; border-radius: 12px; border: 1px solid var(--border);
+    background: var(--surface-hover); color: var(--text-dim); font-size: 0.9em; font-weight: 500;
+    cursor: pointer; transition: all 0.2s ease; white-space: nowrap;
   }
-  .filter-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .filter-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(59, 130, 246, 0.05); }
+  .filter-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3); }
 
   .btn-icon.pinned-active { color: #f59e0b; }
   
@@ -537,14 +537,19 @@ const indexHTML = `<!DOCTYPE html>
             </div>
           </div>
 
-          <div style="display:flex; gap:8px; margin-bottom:16px; flex-wrap:wrap; align-items:center;">
-            <input type="text" id="clip-search" placeholder="搜索剪贴板内容..." style="flex:1; min-width:200px; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); color:var(--text); font-size:0.9em;">
-            <div style="display:flex; gap:4px; flex-wrap:wrap;">
-              <button class="filter-btn active" data-filter="" onclick="setFilter('')">全部</button>
-              <button class="filter-btn" data-filter="text" onclick="setFilter('text')">📝 文本</button>
-              <button class="filter-btn" data-filter="url" onclick="setFilter('url')">🔗 链接</button>
-              <button class="filter-btn" data-filter="code" onclick="setFilter('code')">💻 代码</button>
-              <button class="filter-btn" data-filter="pinned" onclick="setFilter('pinned')">⭐ 收藏</button>
+          <div class="card" style="margin-bottom: 24px;">
+            <div class="card-body" style="padding: 16px; display: flex; flex-direction: column; gap: 16px;">
+              <div style="position: relative; width: 100%;">
+                <svg class="icon" viewBox="0 0 24 24" style="position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--text-dim); pointer-events: none;"><path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/></svg>
+                <input type="text" id="clip-search" placeholder="搜索剪贴板内容..." style="width:100%; padding: 12px 14px 12px 42px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg); color: var(--text); font-size: 0.95em; outline: none; transition: all 0.2s; margin-bottom: 0;">
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="filter-btn active" data-filter="" onclick="setFilter('')">全部</button>
+                <button class="filter-btn" data-filter="text" onclick="setFilter('text')">📝 文本</button>
+                <button class="filter-btn" data-filter="url" onclick="setFilter('url')">🔗 链接</button>
+                <button class="filter-btn" data-filter="code" onclick="setFilter('code')">💻 代码</button>
+                <button class="filter-btn" data-filter="pinned" onclick="setFilter('pinned')">⭐ 收藏</button>
+              </div>
             </div>
           </div>
 

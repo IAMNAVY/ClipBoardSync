@@ -109,55 +109,72 @@ fun ClipboardHistoryScreen(config: AppConfig) {
             .fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        // Search bar
-        OutlinedTextField(
-            value = searchText,
-            onValueChange = { text ->
-                searchText = text
-                searchJob?.cancel()
-                searchJob = scope.launch {
-                    delay(400)
-                    loadData()
-                }
-            },
-            placeholder = { Text("搜索剪贴板内容...") },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(8.dp))
-
-        // Filter chips
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+        // Search and Filter Card (Matches Settings Page Style)
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
         ) {
-            filters.forEach { filter ->
-                val isSelected = if (filter.isPinned) isPinnedFilter
-                    else (!isPinnedFilter && selectedFilter == filter.category)
-
-                AssistChip(
-                    onClick = {
-                        if (filter.isPinned) {
-                            isPinnedFilter = !isPinnedFilter
-                            if (isPinnedFilter) selectedFilter = ""
-                        } else {
-                            isPinnedFilter = false
-                            selectedFilter = filter.category
+            Column(modifier = Modifier.padding(16.dp)) {
+                OutlinedTextField(
+                    value = searchText,
+                    onValueChange = { text ->
+                        searchText = text
+                        searchJob?.cancel()
+                        searchJob = scope.launch {
+                            delay(400)
+                            loadData()
                         }
-                        loadData()
                     },
-                    label = { Text(filter.label, fontSize = 12.sp) },
-                    colors = if (isSelected) AssistChipDefaults.assistChipColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        labelColor = MaterialTheme.colorScheme.onPrimary
-                    ) else AssistChipDefaults.assistChipColors()
+                    placeholder = { Text("搜索剪贴板内容...", fontSize = 14.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(20.dp)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(12.dp),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    )
                 )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    filters.forEach { filter ->
+                        val isSelected = if (filter.isPinned) isPinnedFilter
+                            else (!isPinnedFilter && selectedFilter == filter.category)
+
+                        androidx.compose.material3.FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                if (filter.isPinned) {
+                                    isPinnedFilter = !isPinnedFilter
+                                    if (isPinnedFilter) selectedFilter = ""
+                                } else {
+                                    isPinnedFilter = false
+                                    selectedFilter = filter.category
+                                }
+                                loadData()
+                            },
+                            label = { 
+                                Text(
+                                    filter.label, 
+                                    fontSize = 13.sp, 
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                ) 
+                            },
+                            colors = androidx.compose.material3.FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
+                        )
+                    }
+                }
             }
         }
-
-        Spacer(modifier = Modifier.height(8.dp))
 
         // Loading indicator or list
         if (isLoading && entries.isEmpty()) {
